@@ -50,10 +50,11 @@ public class MainActivity extends Activity {
         TextView subtitle=text(signup?"Create your account and pick a clan to make this space yours.":"Sign in to pick up where you left off.",15,muted,false);subtitle.setLineSpacing(dp(4),1);top(pageView,subtitle,10);
         EditText name=field("Username","Your username");top(pageView,name,28);
         EditText pass=field("Password","Your password");pass.setInputType(129);top(pageView,pass,12);
+        TextView[] submitRef=new TextView[1];
         if(signup){
             TextView choose=text("Choose your clan",16,ink,true);top(pageView,choose,24);
             TextView detail=text("Your clan sets the accent color throughout the app.",13,muted,false);top(pageView,detail,4);
-            LinearLayout options=column();top(pageView,options,12);LinearLayout[] clanRows=new LinearLayout[clans.length];TextView[] submitRef=new TextView[1];
+            LinearLayout options=column();top(pageView,options,12);LinearLayout[] clanRows=new LinearLayout[clans.length];
             for(int i=0;i<clans.length;i++){
                 final int index=i;LinearLayout option=row();clanRows[i]=option;option.setBackground(bordered(white,17,i==selectedClan?clanColors[i]:line));pad(option,14,12,14,12);
                 View dot=new View(this);dot.setBackground(shape(clanColors[i],20));option.addView(dot,lp(14,14));
