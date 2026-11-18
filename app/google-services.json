@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "456491751175",
+    "project_id": "kashafapp-6bce1",
+    "storage_bucket": "kashafapp-6bce1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:456491751175:android:f479f334cea179b2b317a2",
+        "android_client_info": {
+          "package_name": "com.max6778.kashafapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYfMODH1A_HHWei4ii-0xzZRVc6L38zEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
