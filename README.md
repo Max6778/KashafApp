@@ -1,32 +1,39 @@
-# KashafApp
+# الكشفية الحسنية المغربية – فرع السلام
 
-Kashaf is a native Android community app for three clans: Red, Green, and Blue. Account creation and sign-in use Firebase Authentication, and the member profile is saved in Cloud Firestore. Clan and global chat use Firestore live listeners; admins can post global or clan-specific announcements.
+Kashfia Alhassania – Far3 Salam is a scout community app for the Far3 Salam branch. It uses Firebase Authentication for email/password accounts and Cloud Firestore for scout profiles, class chats, and announcements. Passwords are never saved to Firestore.
 
-## Free backend for a small launch
+## Scout classes
 
-Firebase Authentication plus Cloud Firestore is a good fit for about 100 registered users and keeps the project in Java. The Firebase Spark plan currently includes Firestore's first database with 1 GiB stored data, 50,000 document reads/day, 20,000 writes/day, and 10 GiB/month outbound transfer. Exceeding a Spark quota can stop that product's service until its quota resets; watch usage in Firebase Console. These quotas can change, so check [Firebase pricing](https://firebase.google.com/pricing) before launch.
+| Arabic class | English label | Published age range | Accent | Tagline |
+| --- | --- | --- | --- | --- |
+| البراعم | Cubs | 5–7 | Gold | اكتشاف ومتعة |
+| الأشبال والزهرات | Wolf Cubs & Brownies | 7–12 | Green | معًا نتعلّم وننمو |
+| الكشافة والمرشدات | Scouts & Guides | 12–15 | Blue | خدمة ومهارة |
+| الكشاف المتقدم والرائدات | Senior Scouts & Senior Guides | 15–18 | Purple | قيادة ومبادرة |
+| الجوالة والدليلات | Rovers & Rangers | 18–23 | Red | مسؤولية وخدمة المجتمع |
 
-### Setup
+These age bands follow the association's published 2018 internal regulations, Article 1. The official branch directory lists فرع السلام. The regulations also require a parent or guardian's signature for a minor's association enrollment; this app's account form is not a substitute for that enrollment process.
 
-1. Create a Firebase project and register the Android app with package name `com.max6778.kashafapp`.
-2. The Firebase config file `app/google-services.json` is present in this repo for the registered Android app. It contains client project identifiers, not a server password; secure access with Firebase Authentication and Firestore Rules.
-3. Enable **Authentication → Sign-in method → Email/Password** and create the Firestore database in production mode.
-4. The Firebase Google Services plugin, Auth, and Firestore SDK dependencies are already added. After placing `google-services.json` in `app/`, sync Gradle. The signup form collects name, email, password, gender, and clan; password handling is done by Firebase Authentication and the app never writes it to Firestore or local preferences.
-5. Review and publish the starter [Firestore rules](firestore.rules) before releasing the app. Treat client-side admin checks as display logic only; enforce admin permissions in Security Rules.
+Members choose one class at registration. It sets their accent color and class chat. Class-specific announcements are visible only to that class, while announcements for all members are visible to everyone. Existing profiles from the old version are asked to select a scout class the next time they sign in.
 
-### Suggested Firestore model
+## Features
 
-- `users/{uid}`: `name`, `gender`, `clan` (`red`, `green`, or `blue`), `rank` (starts as `member`), and `createdAt`. A user can edit their name and gender but cannot change their clan or rank. Only admins can assign ranks. Keep profile reads private unless the app needs a public profile.
-- `admins/{uid}`: an admin marker document. Create these only from the Firebase Console or a trusted Admin SDK environment, never from the app.
-- `announcements/{announcementId}`: `title`, `body`, `createdBy`, `createdAt`, and `audience` (`all` or a clan). Signed-in users can read; only admins can create, edit, or delete.
-- `rooms/{roomId}/messages/{messageId}`: `authorId`, `authorName`, `text`, and `createdAt`. Use one `global` room and one room per clan (`red`, `green`, `blue`). Rules should allow reads/writes for the global room to signed-in users, and clan-room access only when the caller's `users/{uid}.clan` matches that room. Enforce message length and ownership in the rules.
+- Email/password registration and sign-in with Firebase Authentication.
+- Profiles store name, email, gender, scoutClass, rank, and createdAt. New profiles start at the member rank.
+- One global room (`global`) and five private class rooms (`cubs`, `wolf_cubs_brownies`, `scouts_guides`, `senior_scouts_guides`, `rovers_rangers`). Admins can access all rooms.
+- Text messages are limited to 1,000 characters. Photo/GIF attachments are limited to 700 KB. Photos are resized and JPEG-compressed on the device; GIF animation is preserved and oversized GIFs are rejected.
+- Admins can publish announcements to everyone or a specific class, preview before publishing, and see all announcements. Announcements show audience, date, and author when available.
+- Class emblems are included in class selection, class chat, home, and profile views. The existing launcher icon is retained.
 
-Use Firestore snapshot listeners for live chat updates, paginate message history, and avoid loading an unbounded room. With 100 users, these limits are normally ample for a modest community, but chat listeners count document reads as messages arrive. Set usage alerts and review Firestore usage regularly.
+## Firebase setup
 
-## Admins and moderation
+1. Register the Android app using package name `com.max6778.kashafapp` and keep `app/google-services.json` in the repository.
+2. Enable **Authentication → Sign-in method → Email/Password** and create the Firestore database.
+3. Publish the current [`firestore.rules`](firestore.rules) from Firebase Console → Firestore Database → Rules. These rules restrict class chat access and announcement audiences, validate profile classes, and enforce message/media limits.
+4. Promote an admin by creating `admins/{uid}` in Firestore Console, using the account UID from Authentication → Users. Admin documents must not be created by the app.
 
-Promote admins by creating `admins/{uid}` in the Firebase Console, where `uid` is the account UID shown under Authentication → Users. The app checks this document before showing its announcement form, and Security Rules enforce admin writes. Never add an admin field to signup or let the app create admin documents. Decide who can remove messages and suspend accounts before opening chat to everyone.
+Firestore profiles only include the email address, not the password. Firebase Authentication handles password security.
 
 ## Build
 
-GitHub Actions builds the debug APK on pushes and pull requests to `main`. From a completed workflow run, download the `KashafApp-debug` artifact. The project uses Java and Android Views.
+GitHub Actions builds the debug APK on pushes and pull requests to `main`. Download the `KashafApp-debug` artifact from a successful workflow run. The app is implemented in Java with Android Views.

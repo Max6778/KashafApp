@@ -6,30 +6,46 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    function isClanRoom(roomId) {
+    function validScoutClass(value) {
+      return value in [
+        'cubs',
+        'wolf_cubs_brownies',
+        'scouts_guides',
+        'senior_scouts_guides',
+        'rovers_rangers'
+      ];
+    }
+
+    function ownProfileExists() {
       return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.clan == roomId;
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isClassRoom(roomId) {
+      return ownProfileExists()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.scoutClass == roomId;
     }
 
     function canAccessRoom(roomId) {
-      return signedIn() && (roomId == 'global' || isClanRoom(roomId));
+      return signedIn() && (roomId == 'global' || isAdmin() || isClassRoom(roomId));
     }
 
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['name', 'gender', 'clan', 'rank', 'createdAt'])
-        && request.resource.data.keys().hasAll(['name', 'gender', 'clan', 'rank', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
+        && request.resource.data.keys().hasAll(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1
         && request.resource.data.name.size() <= 60
+        && request.resource.data.email == request.auth.token.email
         && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say']
-        && request.resource.data.clan in ['red', 'green', 'blue']
+        && validScoutClass(request.resource.data.scoutClass)
         && request.resource.data.rank == 'member'
         && request.resource.data.createdAt == request.time;
       allow update: if (signedIn()
@@ -39,6 +55,18 @@ service cloud.firestore {
           && request.resource.data.name.size() >= 1
           && request.resource.data.name.size() <= 60
           && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say'])
+        || (signedIn()
+          && request.auth.uid == uid
+          && !('scoutClass' in resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'gender', 'email', 'clan', 'scoutClass'])
+          && request.resource.data.keys().hasAll(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
+          && !('clan' in request.resource.data)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 1
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say']
+          && validScoutClass(request.resource.data.scoutClass))
         || (isAdmin()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rank'])
           && request.resource.data.rank is string
@@ -53,10 +81,17 @@ service cloud.firestore {
     }
 
     match /announcements/{announcementId} {
-      allow read: if signedIn();
+      allow read: if signedIn()
+        && (isAdmin()
+          || resource.data.audience == 'all'
+          || (ownProfileExists()
+            && resource.data.audience == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.scoutClass));
       allow create: if isAdmin()
-        && request.resource.data.keys().hasOnly(['title', 'body', 'createdBy', 'createdAt', 'audience'])
+        && request.resource.data.keys().hasOnly(['title', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience'])
+        && request.resource.data.keys().hasAll(['title', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience'])
         && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdByName is string
+        && request.resource.data.createdByName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
         && request.resource.data.createdAt == request.time
         && request.resource.data.title is string
         && request.resource.data.title.size() >= 1
@@ -64,7 +99,7 @@ service cloud.firestore {
         && request.resource.data.body is string
         && request.resource.data.body.size() >= 1
         && request.resource.data.body.size() <= 4000
-        && request.resource.data.audience in ['all', 'red', 'green', 'blue'];
+        && (request.resource.data.audience == 'all' || validScoutClass(request.resource.data.audience));
       allow update, delete: if isAdmin();
     }
 
@@ -77,7 +112,7 @@ service cloud.firestore {
         && request.resource.data.authorName is string
         && request.resource.data.authorName.size() >= 1
         && request.resource.data.authorName.size() <= 32
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && ownProfileExists()
         && request.resource.data.authorName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
         && request.resource.data.text is string
         && request.resource.data.text.size() <= 1000
