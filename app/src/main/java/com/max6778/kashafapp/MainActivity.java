@@ -685,7 +685,14 @@ public class MainActivity extends Activity {
                     LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(maxBubble - dp(26), dp(200)); pp.topMargin = dp(mine ? 0 : 6);
                     bubble.addView(mediaPreview(media.toBytes(), mediaType), pp);
                 }
-                if (body != null && !body.isEmpty()) { TextView m = text(body, 15, ink, false); m.setSingleLine(false); m.setHorizontallyScrolling(false); m.setMaxLines(100); m.setLineSpacing(dp(2), 1.1f); top(bubble, m, mine || (media != null) ? (media != null ? 6 : 0) : 3); }
+                if (body != null && !body.isEmpty()) {
+                    TextView m = text(body, 15, ink, false);
+                    m.setSingleLine(false); m.setHorizontallyScrolling(false); m.setMaxLines(100); m.setLineSpacing(dp(2), 1.1f);
+                    m.setGravity(Gravity.START); m.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+                    LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(-2, -2);
+                    messageParams.topMargin = dp(mine || media != null ? (media != null ? 6 : 0) : 3);
+                    bubble.addView(m, messageParams);
+                }
                 Timestamp ts = doc.getTimestamp("createdAt");
                 TextView time = text(ts == null ? "…" : timeFormat.format(ts.toDate()), 10, muted, false);
                 LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2); tp.topMargin = dp(3); tp.gravity = Gravity.END; bubble.addView(time, tp);
