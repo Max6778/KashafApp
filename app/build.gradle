@@ -5,7 +5,7 @@ plugins {
 android {
     namespace 'com.max6778.kashafapp'
     compileSdk 35
-    defaultConfig { applicationId 'com.max6778.kashafapp'; minSdk 23; targetSdk 35; versionCode 1; versionName '1.0' }
+    defaultConfig { applicationId 'com.max6778.kashafapp'; minSdk 24; targetSdk 35; versionCode 1; versionName '1.0' }
 }
 
 dependencies {
