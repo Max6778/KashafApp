@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
     private final String[] classAges={"5–7 years","7–12 years","12–15 years","15–18 years","18–23 years"};
     private final String[] classTaglines={"اكتشاف ومتعة","معًا نتعلّم وننمو","خدمة ومهارة","قيادة ومبادرة","مسؤولية وخدمة المجتمع"};
     private final String[] classEnglishTaglines={"Discover and play","Learn and grow together","Service and skills","Leadership and initiative","Responsibility and community service"};
-    private final int[] classColors={Color.rgb(211,166,55),Color.rgb(45,137,86),Color.rgb(52,112,190),Color.rgb(128,83,166),Color.rgb(202,61,68)};
+    private final int[] classColors={Color.rgb(211,166,55),Color.rgb(52,112,190),Color.rgb(45,137,86),Color.rgb(202,61,68),Color.rgb(137,119,77)};
     private final int[] classLogos={R.drawable.class_cubs,R.drawable.class_wolf_cubs,R.drawable.class_scouts_guides,R.drawable.class_senior,R.drawable.class_rovers};
     private FirebaseAuth auth;
     private FirebaseFirestore db;

@@ -7,10 +7,10 @@ Kashfia Alhassania – Far3 Salam is a scout community app for the Far3 Salam br
 | Arabic class | English label | Published age range | Accent | Tagline |
 | --- | --- | --- | --- | --- |
 | البراعم | Cubs | 5–7 | Gold | اكتشاف ومتعة |
-| الأشبال والزهرات | Wolf Cubs & Brownies | 7–12 | Green | معًا نتعلّم وننمو |
-| الكشافة والمرشدات | Scouts & Guides | 12–15 | Blue | خدمة ومهارة |
-| الكشاف المتقدم والرائدات | Senior Scouts & Senior Guides | 15–18 | Purple | قيادة ومبادرة |
-| الجوالة والدليلات | Rovers & Rangers | 18–23 | Red | مسؤولية وخدمة المجتمع |
+| الأشبال والزهرات | Wolf Cubs & Brownies | 7–12 | Blue | معًا نتعلّم وننمو |
+| الكشافة والمرشدات | Scouts & Guides | 12–15 | Green | خدمة ومهارة |
+| الكشاف المتقدم والرائدات | Senior Scouts & Senior Guides | 15–18 | Red | قيادة ومبادرة |
+| الجوالة والدليلات | Rovers & Rangers | 18–23 | Khaki | مسؤولية وخدمة المجتمع |
 
 These age bands follow the association's published 2018 internal regulations, Article 1. The official branch directory lists فرع السلام. The regulations also require a parent or guardian's signature for a minor's association enrollment; this app's account form is not a substitute for that enrollment process.
 
