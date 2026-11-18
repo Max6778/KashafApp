@@ -1,6 +1,6 @@
 # KashafApp
 
-Kashaf is a native Android community app for three clans: Red, Green, and Blue. Account creation and sign-in use Firebase Authentication, and the member profile is saved in Cloud Firestore. The announcements and chat screens are still visual previews and are not connected to Firestore yet.
+Kashaf is a native Android community app for three clans: Red, Green, and Blue. Account creation and sign-in use Firebase Authentication, and the member profile is saved in Cloud Firestore. Clan and global chat use Firestore live listeners; admins can post global or clan-specific announcements.
 
 ## Free backend for a small launch
 
@@ -9,7 +9,7 @@ Firebase Authentication plus Cloud Firestore is a good fit for about 100 registe
 ### Setup
 
 1. Create a Firebase project and register the Android app with package name `com.max6778.kashafapp`.
-2. Download `google-services.json` into the project’s `app/` folder. It contains project identifiers, not a server secret; this repo ignores it so each checkout can use its own Firebase project configuration.
+2. The Firebase config file `app/google-services.json` is present in this repo for the registered Android app. It contains client project identifiers, not a server password; secure access with Firebase Authentication and Firestore Rules.
 3. Enable **Authentication → Sign-in method → Email/Password** and create the Firestore database in production mode.
 4. The Firebase Google Services plugin, Auth, and Firestore SDK dependencies are already added. After placing `google-services.json` in `app/`, sync Gradle. The signup form collects name, email, password, gender, and clan; password handling is done by Firebase Authentication and the app never writes it to Firestore or local preferences.
 5. Review and publish the starter [Firestore rules](firestore.rules) before releasing the app. Treat client-side admin checks as display logic only; enforce admin permissions in Security Rules.
@@ -25,8 +25,8 @@ Use Firestore snapshot listeners for live chat updates, paginate message history
 
 ## Admins and moderation
 
-Promote admins by adding their UID to `admins/{uid}` from the Firebase Console. Rules should check that document for announcement writes. Avoid a public sign-up field or local preference that lets a user set their own admin status. Decide who can remove messages and suspend accounts before opening chat to everyone.
+Promote admins by creating `admins/{uid}` in the Firebase Console, where `uid` is the account UID shown under Authentication → Users. The app checks this document before showing its announcement form, and Security Rules enforce admin writes. Never add an admin field to signup or let the app create admin documents. Decide who can remove messages and suspend accounts before opening chat to everyone.
 
 ## Build
 
-Open this folder in Android Studio and run the `app` configuration. The project uses Java and Android Views. Each checkout needs its own `app/google-services.json` file, which is intentionally excluded from Git.
+GitHub Actions builds the debug APK on pushes and pull requests to `main`. From a completed workflow run, download the `KashafApp-debug` artifact. The project uses Java and Android Views.

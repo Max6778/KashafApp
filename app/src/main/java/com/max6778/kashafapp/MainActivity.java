@@ -1,6 +1,7 @@
 package com.max6778.kashafapp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -10,10 +11,11 @@ import android.view.View;
 import android.widget.*;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.firestore.FieldValue;
-import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.*;
 import java.util.HashMap;
 import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private final int ink=Color.rgb(35,35,48), muted=Color.rgb(112,112,130), paper=Color.rgb(247,247,251), white=Color.WHITE, line=Color.rgb(232,232,241), peach=Color.rgb(255,236,226);
@@ -24,7 +26,11 @@ public class MainActivity extends Activity {
     private FirebaseFirestore db;
     private int accent=Color.rgb(226,76,88), selectedClan=0;
     private String clan="Red Clan", user="", gender="prefer_not_to_say", rank="member", page="Home";
-    private LinearLayout root, content;
+    private String currentRoomId="global", currentRoomTitle="Global lounge";
+    private boolean isAdmin=false;
+    private ListenerRegistration chatListener, announcementListener;
+    private LinearLayout root, content, roomMessages;
+    private EditText messageInput;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -97,17 +103,26 @@ public class MainActivity extends Activity {
     private void saveProfile(FirebaseUser account,String name,String genderValue,int clanPosition){
         if(account==null){toast("Please sign in again.");return;}
         Map<String,Object> profile=new HashMap<>();profile.put("name",name);profile.put("gender",genderValue);profile.put("clan",clanId(clanPosition));profile.put("rank","member");profile.put("createdAt",FieldValue.serverTimestamp());
-        db.collection("users").document(account.getUid()).set(profile).addOnSuccessListener(unused->{user=name;gender=genderValue;clan=clans[clanPosition];rank="member";accent=clanColors[clanPosition];page="Home";showApp();}).addOnFailureListener(error->{toast("Account exists, but the profile could not be saved. Check Firestore rules and try again.");showAuth(true);});
+        db.collection("users").document(account.getUid()).set(profile).addOnSuccessListener(unused->{user=name;gender=genderValue;clan=clans[clanPosition];rank="member";accent=clanColors[clanPosition];page="Home";loadAdminStatus();}).addOnFailureListener(error->{toast("Account exists, but the profile could not be saved. Check Firestore rules and try again.");showAuth(true);});
     }
     private void loadProfile(){
         FirebaseUser account=auth.getCurrentUser();if(account==null){showAuth(false);return;}
-        db.collection("users").document(account.getUid()).get().addOnSuccessListener(snapshot->{if(!snapshot.exists()){toast("Finish setting up your profile.");showAuth(true);return;}user=snapshot.getString("name");gender=snapshot.getString("gender");rank=snapshot.getString("rank");clan=clanName(snapshot.getString("clan"));accent=clanColors[clanIndex(snapshot.getString("clan"))];page="Home";showApp();}).addOnFailureListener(error->{toast("Could not load your profile. Check your connection and Firestore rules.");showAuth(false);});
+        db.collection("users").document(account.getUid()).get().addOnSuccessListener(snapshot->{if(!snapshot.exists()){toast("Finish setting up your profile.");showAuth(true);return;}user=snapshot.getString("name");gender=snapshot.getString("gender");rank=snapshot.getString("rank");clan=clanName(snapshot.getString("clan"));accent=clanColors[clanIndex(snapshot.getString("clan"))];page="Home";loadAdminStatus();}).addOnFailureListener(error->{toast("Could not load your profile. Check your connection and Firestore rules.");showAuth(false);});
     }
     private String clanName(String id){return clans[clanIndex(id)];}
+    private String currentClanId(){return clanId(clanIndex(clan.startsWith("Green")?"green":clan.startsWith("Blue")?"blue":"red"));}
+    private void loadAdminStatus(){
+        FirebaseUser account=auth.getCurrentUser();if(account==null){isAdmin=false;showApp();return;}
+        db.collection("admins").document(account.getUid()).get().addOnSuccessListener(doc->{isAdmin=doc.exists();showApp();}).addOnFailureListener(error->{isAdmin=false;showApp();});
+    }
+    private void clearListeners(){if(chatListener!=null){chatListener.remove();chatListener=null;}if(announcementListener!=null){announcementListener.remove();announcementListener=null;}}
+    @Override protected void onDestroy(){clearListeners();super.onDestroy();}
+
     private EditText field(String label,String hint){EditText e=new EditText(this);e.setSingleLine(true);e.setTextSize(15);e.setTextColor(ink);e.setHintTextColor(muted);e.setHint(hint);e.setPadding(dp(16),0,dp(16),0);e.setBackground(bordered(white,15,line));e.setContentDescription(label);return e;}
     private int tint(int color,float factor){return Color.rgb((int)(Color.red(color)*factor+255*(1-factor)),(int)(Color.green(color)*factor+255*(1-factor)),(int)(Color.blue(color)*factor+255*(1-factor)));}
 
     private void showApp(){
+        clearListeners();
         root=column();root.setBackgroundColor(paper);setContentView(root);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         content=column();pad(content,22,24,22,26);scroll.addView(content);renderPage();
@@ -122,8 +137,9 @@ public class MainActivity extends Activity {
             clanHero();
             sectionLabel("Your space","EXPLORE");
             quickLink("◉","Clan chat","Catch up with your people","Chat");quickLink("▤","Announcements","Updates from your community","News");
-        }else if(page.equals("News")){pageHeader("Announcements","Updates from the whole community.");announcementPreview();}
-        else if(page.equals("Chat")){pageHeader("Your conversations","Pick a room and join in.");roomCard("✦","Global lounge","Everyone across Kashaf","ALL CLANS",ink);roomCard("●",clan,"Your clan’s private space",clan.toUpperCase(),accent);}
+        }else if(page.equals("News")){pageHeader("Announcements","Updates from your community.");if(isAdmin)adminAnnouncementButton();LinearLayout feed=column();top(content,feed,16);listenAnnouncements(feed);}
+        else if(page.equals("Chat")){pageHeader("Your conversations","Choose a room to join.");roomCard("✦","Global lounge","Everyone across Kashaf","ALL CLANS",ink,"global");roomCard("●",clan,"Your clan’s private space",clan.toUpperCase(),accent,currentClanId());}
+        else if(page.equals("Room")){roomPage();}
         else{pageHeader("Your profile","Your Kashaf space, your way.");profileCard();TextView signout=text("Sign out",15,accent,true);signout.setGravity(Gravity.CENTER);signout.setBackground(bordered(white,16,line));top(content,signout,14);pad(signout,16,16,16,16);signout.setOnClickListener(v->{auth.signOut();page="Home";showAuth(false);});}
     }
     private String initial(String value){return value==null||value.isEmpty()?"K":value.substring(0,1).toUpperCase();}
@@ -135,18 +151,72 @@ public class MainActivity extends Activity {
         TextView desc=text("Find your people. Share what matters.",13,Color.rgb(220,207,207),false);top(card,desc,7);
         LinearLayout colors=row();TextView colorLabel=text("YOUR CLAN COLOR",10,Color.rgb(220,207,207),true);colorLabel.setLetterSpacing(.1f);colors.addView(colorLabel);LinearLayout.LayoutParams push=lp(0,1);push.weight=1;colors.addView(new View(this),push);TextView rgb=text(rgbLabel(accent),11,white,true);rgb.setBackground(shape(0x33ffffff,20));pad(rgb,10,6,10,6);colors.addView(rgb);top(card,colors,20);
     }
-    private void roomCard(String icon,String title,String subtitle,String tag,int color){
+    private void roomCard(String icon,String title,String subtitle,String tag,int color,String roomId){
         LinearLayout card=row();card.setBackground(bordered(white,20,line));pad(card,16,16,16,16);top(content,card,12);
         TextView mark=text(icon,20,color,true);mark.setGravity(Gravity.CENTER);mark.setBackground(shape(tint(color,.10f),15));card.addView(mark,lp(48,48));
         LinearLayout words=column();TextView name=text(title,16,ink,true);words.addView(name);TextView detail=text(subtitle,12,muted,false);top(words,detail,4);LinearLayout.LayoutParams p=lp(0,-2);p.weight=1;p.leftMargin=13;card.addView(words,p);
         TextView badge=text(tag,9,color,true);badge.setLetterSpacing(.05f);badge.setBackground(shape(tint(color,.10f),20));pad(badge,9,7,9,7);card.addView(badge);
+        card.setOnClickListener(v->{currentRoomId=roomId;currentRoomTitle=title;page="Room";showApp();});
     }
-    private void announcementPreview(){
-        LinearLayout card=column();card.setBackground(bordered(white,22,line));pad(card,20,20,20,20);top(content,card,22);
-        TextView badge=text("COMMUNITY UPDATE",10,accent,true);badge.setLetterSpacing(.1f);card.addView(badge);
-        TextView title=text("A new space for every clan",19,ink,true);top(card,title,12);
-        TextView body=text("Announcements will appear here when an admin posts an update. Check back soon.",14,muted,false);body.setLineSpacing(dp(4),1);top(card,body,7);
-        TextView foot=text("KASHAF  ·  ALL CLANS",10,muted,true);foot.setLetterSpacing(.08f);top(card,foot,18);
+    private void roomPage(){
+        TextView back=text("‹  All rooms",14,accent,true);top(content,back,4);back.setOnClickListener(v->{page="Chat";showApp();});
+        pageHeader(currentRoomTitle,"Messages are visible to "+(currentRoomId.equals("global")?"all clans":"members of this clan")+".");
+        ScrollView messagesScroll=new ScrollView(this);messagesScroll.setFillViewport(false);LinearLayout.LayoutParams scrollParams=lp(-1,320);scrollParams.topMargin=dp(16);content.addView(messagesScroll,scrollParams);
+        roomMessages=column();messagesScroll.addView(roomMessages);
+        LinearLayout composer=row();top(content,composer,12);messageInput=field("Message","Write a message...");messageInput.setSingleLine(true);LinearLayout.LayoutParams inputParams=lp(0,52);inputParams.weight=1;composer.addView(messageInput,inputParams);
+        TextView send=text("Send",14,white,true);send.setGravity(Gravity.CENTER);send.setBackground(shape(accent,14));pad(send,16,14,16,14);LinearLayout.LayoutParams sendParams=lp(-2,48);sendParams.leftMargin=8;composer.addView(send,sendParams);send.setOnClickListener(v->sendMessage());
+        listenMessages(messagesScroll);
+    }
+    private void listenMessages(ScrollView messagesScroll){
+        chatListener=db.collection("rooms").document(currentRoomId).collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(60).addSnapshotListener((snapshot,error)->{
+            if(error!=null){toast("Could not load messages. Check your Firestore rules.");return;}
+            if(snapshot==null||roomMessages==null)return;roomMessages.removeAllViews();
+            if(snapshot.isEmpty()){TextView empty=text("No messages yet. Start the conversation.",14,muted,false);empty.setGravity(Gravity.CENTER);pad(empty,12,28,12,28);roomMessages.addView(empty);return;}
+            String myUid=auth.getCurrentUser()==null?"":auth.getCurrentUser().getUid();
+            for(int i=snapshot.size()-1;i>=0;i--){
+                DocumentSnapshot doc=snapshot.getDocuments().get(i);String author=doc.getString("authorName"),body=doc.getString("text"),authorId=doc.getString("authorId");
+                LinearLayout bubble=column();boolean mine=myUid.equals(authorId);bubble.setBackground(bordered(mine?ink:white,16,line));pad(bubble,13,10,13,10);
+                TextView sender=text(mine?"You":(author==null?"Member":author),11,mine?white:accent,true);bubble.addView(sender);
+                TextView message=text(body==null?"":body,14,mine?white:ink,false);message.setLineSpacing(dp(3),1);top(bubble,message,4);
+                LinearLayout.LayoutParams bubbleParams=lp(-1,-2);bubbleParams.topMargin=dp(8);roomMessages.addView(bubble,bubbleParams);
+            }
+            messagesScroll.post(()->messagesScroll.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+    private void sendMessage(){
+        FirebaseUser account=auth.getCurrentUser();String body=messageInput==null?"":messageInput.getText().toString().trim();
+        if(account==null||body.isEmpty())return;if(body.length()>1000){toast("Messages must be 1,000 characters or less.");return;}
+        Map<String,Object> message=new HashMap<>();message.put("authorId",account.getUid());message.put("authorName",user);message.put("text",body);message.put("createdAt",FieldValue.serverTimestamp());
+        db.collection("rooms").document(currentRoomId).collection("messages").add(message).addOnSuccessListener(ref->{if(messageInput!=null)messageInput.setText("");}).addOnFailureListener(error->toast("Message could not be sent. Check your clan membership and Firestore rules."));
+    }
+    private void adminAnnouncementButton(){
+        TextView button=text("＋  Post announcement",14,white,true);button.setGravity(Gravity.CENTER);button.setBackground(shape(accent,16));pad(button,14,14,14,14);top(content,button,18);button.setOnClickListener(v->showAnnouncementDialog());
+    }
+    private void showAnnouncementDialog(){
+        LinearLayout form=column();pad(form,4,4,4,4);EditText title=field("Title","Announcement title");form.addView(title);
+        EditText body=field("Message","Write your update...");body.setSingleLine(false);body.setMinLines(4);body.setGravity(Gravity.TOP);LinearLayout.LayoutParams bodyParams=lp(-1,-2);bodyParams.topMargin=dp(10);form.addView(body,bodyParams);
+        Spinner audience=new Spinner(this);String[] options={"All clans","Red Clan","Green Clan","Blue Clan"};ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,options);adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);audience.setAdapter(adapter);audience.setBackground(bordered(white,12,line));LinearLayout.LayoutParams audienceParams=lp(-1,48);audienceParams.topMargin=dp(10);form.addView(audience,audienceParams);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New announcement").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Post",null).create();
+        dialog.setOnShowListener(unused->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String t=title.getText().toString().trim(),b=body.getText().toString().trim();if(t.isEmpty()||b.isEmpty()){toast("Add a title and message first.");return;}String[] audiences={"all","red","green","blue"};dialog.dismiss();postAnnouncement(t,b,audiences[audience.getSelectedItemPosition()]);}));dialog.show();
+    }
+    private void postAnnouncement(String title,String body,String audience){
+        FirebaseUser account=auth.getCurrentUser();if(account==null||!isAdmin){toast("Only admins can post announcements.");return;}
+        Map<String,Object> announcement=new HashMap<>();announcement.put("title",title);announcement.put("body",body);announcement.put("createdBy",account.getUid());announcement.put("createdAt",FieldValue.serverTimestamp());announcement.put("audience",audience);
+        db.collection("announcements").add(announcement).addOnFailureListener(error->toast("Announcement was not published. Check admin access and Firestore rules."));
+    }
+    private void listenAnnouncements(LinearLayout feed){
+        announcementListener=db.collection("announcements").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener((snapshot,error)->{
+            if(error!=null){toast("Could not load announcements. Check your Firestore rules.");return;}if(snapshot==null)return;feed.removeAllViews();int shown=0;
+            for(DocumentSnapshot doc:snapshot.getDocuments()){
+                String audience=doc.getString("audience");if(!"all".equals(audience)&&!currentClanId().equals(audience))continue;
+                LinearLayout card=column();card.setBackground(bordered(white,20,line));pad(card,18,18,18,18);LinearLayout.LayoutParams cardParams=lp(-1,-2);cardParams.topMargin=dp(10);feed.addView(card,cardParams);
+                TextView badge=text("all".equals(audience)?"ALL CLANS":clanName(audience)+" ONLY",10,accent,true);badge.setLetterSpacing(.08f);card.addView(badge);
+                TextView title=text(doc.getString("title")==null?"Announcement":doc.getString("title"),18,ink,true);top(card,title,10);
+                TextView body=text(doc.getString("body")==null?"":doc.getString("body"),14,muted,false);body.setLineSpacing(dp(3),1);top(card,body,6);
+                Timestamp created=doc.getTimestamp("createdAt");if(created!=null){TextView date=text(new SimpleDateFormat("MMM d, yyyy · h:mm a",Locale.getDefault()).format(created.toDate()),10,muted,false);top(card,date,12);}shown++;
+            }
+            if(shown==0)emptyStateIn(feed,"▤","No announcements yet","New community updates will appear here.");
+        });
     }
     private String rgbLabel(int c){return "RGB  "+Color.red(c)+" · "+Color.green(c)+" · "+Color.blue(c);}
     private void sectionLabel(String title,String eyebrow){LinearLayout r=row();TextView t=text(title,20,ink,true);LinearLayout.LayoutParams a=lp(0,-2);a.weight=1;r.addView(t,a);TextView e=text(eyebrow,10,muted,true);e.setLetterSpacing(.1f);r.addView(e);top(content,r,26);}
@@ -158,6 +228,12 @@ public class MainActivity extends Activity {
     private void emptyState(String icon,String title,String subtitle){
         LinearLayout card=column();card.setGravity(Gravity.CENTER);card.setBackground(bordered(white,22,line));pad(card,24,30,24,30);top(content,card,24);
         TextView mark=text(icon,24,accent,true);mark.setGravity(Gravity.CENTER);mark.setBackground(shape(tint(accent,.11f),24));card.addView(mark,lp(58,58));TextView h=text(title,19,ink,true);h.setGravity(Gravity.CENTER);top(card,h,18);TextView s=text(subtitle,14,muted,false);s.setGravity(Gravity.CENTER);s.setLineSpacing(dp(3),1);top(card,s,7);
+    }
+    private void emptyStateIn(LinearLayout parent,String icon,String title,String subtitle){
+        LinearLayout card=column();card.setGravity(Gravity.CENTER);card.setBackground(bordered(white,22,line));pad(card,24,30,24,30);
+        TextView mark=text(icon,24,accent,true);mark.setGravity(Gravity.CENTER);mark.setBackground(shape(tint(accent,.11f),24));card.addView(mark,lp(58,58));
+        TextView heading=text(title,19,ink,true);heading.setGravity(Gravity.CENTER);top(card,heading,18);TextView detail=text(subtitle,14,muted,false);detail.setGravity(Gravity.CENTER);detail.setLineSpacing(dp(3),1);top(card,detail,7);
+        LinearLayout.LayoutParams params=lp(-1,-2);params.topMargin=dp(10);parent.addView(card,params);
     }
     private void profileCard(){LinearLayout c=row();c.setBackground(bordered(white,20,line));pad(c,16,16,16,16);top(content,c,24);TextView av=text(initial(user),18,accent,true);av.setGravity(Gravity.CENTER);av.setBackground(shape(tint(accent,.12f),30));c.addView(av,lp(52,52));LinearLayout info=column();TextView name=text(user,16,ink,true);info.addView(name);TextView clanName=text(clan+"  ·  "+rank+"  ·  "+gender,12,muted,false);top(info,clanName,5);LinearLayout.LayoutParams p=lp(0,-2);p.weight=1;p.leftMargin=13;c.addView(info,p);}
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_SHORT).show();}
