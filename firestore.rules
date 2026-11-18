@@ -44,7 +44,7 @@ service cloud.firestore {
         && request.resource.data.name.size() >= 1
         && request.resource.data.name.size() <= 60
         && request.resource.data.email == request.auth.token.email
-        && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say']
+        && request.resource.data.gender in ['female', 'male']
         && validScoutClass(request.resource.data.scoutClass)
         && request.resource.data.rank == 'member'
         && request.resource.data.createdAt == request.time;
@@ -54,7 +54,7 @@ service cloud.firestore {
           && request.resource.data.name is string
           && request.resource.data.name.size() >= 1
           && request.resource.data.name.size() <= 60
-          && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say'])
+          && request.resource.data.gender in ['female', 'male'])
         || (signedIn()
           && request.auth.uid == uid
           && !('scoutClass' in resource.data)
@@ -65,7 +65,7 @@ service cloud.firestore {
           && request.resource.data.name.size() >= 1
           && request.resource.data.name.size() <= 60
           && request.resource.data.email == request.auth.token.email
-          && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say']
+          && request.resource.data.gender in ['female', 'male']
           && validScoutClass(request.resource.data.scoutClass))
         || (isAdmin()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rank'])

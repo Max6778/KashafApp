@@ -62,14 +62,14 @@ public class MainActivity extends Activity {
     private final String[] classTaglines = {"اكتشاف ومتعة", "معًا نتعلّم وننمو", "خدمة ومهارة", "قيادة ومبادرة", "مسؤولية وخدمة المجتمع"};
     private final int[] classColors = {Color.rgb(211, 166, 55), Color.rgb(52, 112, 190), Color.rgb(45, 137, 86), Color.rgb(202, 61, 68), Color.rgb(137, 119, 77)};
     private final int[] classLogos = {R.drawable.class_cubs, R.drawable.class_wolf_cubs, R.drawable.class_scouts_guides, R.drawable.class_senior, R.drawable.class_rovers};
-    private final String[] genderLabels = {"أنثى", "ذكر", "غير ثنائي", "أفضل عدم الإفصاح"};
-    private final String[] genderValues = {"female", "male", "non-binary", "prefer_not_to_say"};
+    private final String[] genderLabels = {"أنثى", "ذكر"};
+    private final String[] genderValues = {"female", "male"};
 
     private FirebaseAuth auth;
     private FirebaseFirestore db;
     private SharedPreferences prefs;
     private int accent, selectedClass = -1;
-    private String scoutClassId = "", user = "", emailAddress = "", gender = "prefer_not_to_say", rank = "member", page = "Home";
+    private String scoutClassId = "", user = "", emailAddress = "", gender = "", rank = "member", page = "Home";
     private boolean legacyClassSetup = false, isAdmin = false;
     private String currentRoomId = "global", currentRoomTitle = "الصالة العامة";
     private ListenerRegistration chatListener, announcementListener;
@@ -325,7 +325,7 @@ public class MainActivity extends Activity {
     }
 
     private int genderPosition(String value) { for (int i = 0; i < genderValues.length; i++) if (genderValues[i].equals(value)) return i; return -1; }
-    private String genderLabel(String value) { int p = genderPosition(value); return p < 0 ? genderLabels[3] : genderLabels[p]; }
+    private String genderLabel(String value) { int p = genderPosition(value); return p < 0 ? "غير محدد" : genderLabels[p]; }
     private String rankLabel(String value) { if ("member".equals(value)) return "عضو"; if ("admin".equals(value)) return "مشرف"; return value; }
     private String classId(int index) { return classIds[index]; }
     private int classIndex(String id) { for (int i = 0; i < classIds.length; i++) if (classIds[i].equals(id)) return i; return 0; }
@@ -341,6 +341,7 @@ public class MainActivity extends Activity {
     private void saveProfile(FirebaseUser account, String name, String email, String genderValue, int classPosition) {
         if (account == null) { toast("الرجاء تسجيل الدخول من جديد."); return; }
         String verifiedEmail = account.getEmail() == null ? email : account.getEmail();
+        gender = genderValue;
         Map<String, Object> profile = new HashMap<>();
         profile.put("name", name); profile.put("email", verifiedEmail); profile.put("gender", genderValue); profile.put("scoutClass", classId(classPosition));
         DocumentReference ref = db.collection("users").document(account.getUid());
@@ -351,7 +352,14 @@ public class MainActivity extends Activity {
         } else {
             profile.put("rank", "member"); profile.put("createdAt", FieldValue.serverTimestamp());
             ref.set(profile).addOnSuccessListener(unused -> finishProfile(name, verifiedEmail, genderValue, classPosition, "member"))
-                .addOnFailureListener(error -> { toast("تم إنشاء الحساب لكن تعذّر حفظ الملف الشخصي. حاول مجددًا."); showAuth(true); });
+                .addOnFailureListener(error -> {
+                    String hint = error instanceof FirebaseFirestoreException && ((FirebaseFirestoreException) error).getCode() == FirebaseFirestoreException.Code.PERMISSION_DENIED
+                        ? "تحقق من نشر قواعد Firestore المحدّثة."
+                        : "تحقق من الاتصال ثم حاول مجددًا.";
+                    String code = error instanceof FirebaseFirestoreException ? ((FirebaseFirestoreException) error).getCode().name() : error.getClass().getSimpleName();
+                    toast("تم إنشاء الحساب، لكن تعذّر حفظ الملف الشخصي. " + hint + " رمز الخطأ: " + code);
+                    showAuth(true);
+                });
         }
     }
     private void finishProfile(String name, String email, String genderValue, int classPosition, String savedRank) {
@@ -361,10 +369,10 @@ public class MainActivity extends Activity {
         FirebaseUser account = auth.getCurrentUser();
         if (account == null) { showAuth(false); return; }
         db.collection("users").document(account.getUid()).get().addOnSuccessListener(snapshot -> {
-            if (!snapshot.exists()) { legacyClassSetup = false; user = ""; gender = "prefer_not_to_say"; selectedClass = -1; toast("أكمل إعداد ملفك الشخصي."); showAuth(true); return; }
+            if (!snapshot.exists()) { legacyClassSetup = false; user = ""; gender = ""; selectedClass = -1; toast("أكمل إعداد ملفك الشخصي."); showAuth(true); return; }
             user = snapshot.getString("name") == null ? "كشاف" : snapshot.getString("name");
             emailAddress = snapshot.getString("email") == null ? account.getEmail() : snapshot.getString("email");
-            gender = snapshot.getString("gender") == null ? "prefer_not_to_say" : snapshot.getString("gender");
+            gender = snapshot.getString("gender") == null ? "" : snapshot.getString("gender");
             rank = snapshot.getString("rank") == null ? "member" : snapshot.getString("rank");
             scoutClassId = snapshot.getString("scoutClass");
             if (scoutClassId == null || !Arrays.asList(classIds).contains(scoutClassId)) { legacyClassSetup = true; selectedClass = -1; toast("اختر فئتك الكشفية لإكمال ملفك الشخصي."); showAuth(true); return; }
