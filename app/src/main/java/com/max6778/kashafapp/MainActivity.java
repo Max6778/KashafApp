@@ -265,7 +265,7 @@ public class MainActivity extends Activity {
         final EditText nameField = signup ? field("اسمك الكامل") : null;
         if (nameField != null) {
             nameField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
-            if (Build.VERSION.SDK_INT >= 26) { nameField.setAutofillHints(View.AUTOFILL_HINT_PERSON_NAME); nameField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES); }
+            if (Build.VERSION.SDK_INT >= 26) { nameField.setAutofillHints("name"); nameField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES); }
             if (legacyClassSetup && user != null) nameField.setText(user);
             labeled(form, "الاسم", box(nameField, null), 26);
         }
@@ -283,7 +283,7 @@ public class MainActivity extends Activity {
 
         final EditText passField = signedIn == null ? field("كلمة المرور") : null;
         if (passField != null) {
-            if (Build.VERSION.SDK_INT >= 26) passField.setAutofillHints(signup ? View.AUTOFILL_HINT_NEW_PASSWORD : View.AUTOFILL_HINT_PASSWORD);
+            if (Build.VERSION.SDK_INT >= 26) passField.setAutofillHints(signup ? "newPassword" : View.AUTOFILL_HINT_PASSWORD);
             passField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
             passField.setTextDirection(View.TEXT_DIRECTION_LTR); passField.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
             TextView toggle = text("إظهار", 13, accentText(accent), true); toggle.setGravity(Gravity.CENTER);
