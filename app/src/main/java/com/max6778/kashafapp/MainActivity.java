@@ -2,6 +2,7 @@ package com.max6778.kashafapp;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -29,7 +30,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.widget.*;
+import com.google.firebase.FirebaseNetworkException;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.*;
@@ -41,14 +44,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final int PICK_CHAT_IMAGE = 7104;
+    private static final int PICK_ANNOUNCEMENT_IMAGE = 7105;
     private static final int MAX_MEDIA_BYTES = 700 * 1024;
     private static final int MAX_SOURCE_BYTES = 12 * 1024 * 1024;
     private static final int MAX_MESSAGE = 1000;
+    private static final int MEMBER_CLASS_COUNT = 5;
     private static final Locale AR = new Locale("ar", "MA");
 
     // ---- Theme colors (filled by applyTheme) ----
@@ -56,12 +63,12 @@ public class MainActivity extends Activity {
     private int bg, surface, ink, muted, line, brand, green, heroBg, heroSub;
 
     private final String branchArabic = "فرع السلام", organizationArabic = "الكشفية الحسنية المغربية";
-    private final String[] classIds = {"cubs", "wolf_cubs_brownies", "scouts_guides", "senior_scouts_guides", "rovers_rangers"};
-    private final String[] classArabic = {"البراعم", "الأشبال والزهرات", "الكشافة والمرشدات", "الكشاف المتقدم والرائدات", "الجوالة والدليلات"};
-    private final String[] classAges = {"من 5 إلى 7 سنوات", "من 7 إلى 12 سنة", "من 12 إلى 15 سنة", "من 15 إلى 18 سنة", "من 18 إلى 23 سنة"};
-    private final String[] classTaglines = {"اكتشاف ومتعة", "معًا نتعلّم وننمو", "خدمة ومهارة", "قيادة ومبادرة", "مسؤولية وخدمة المجتمع"};
-    private final int[] classColors = {Color.rgb(211, 166, 55), Color.rgb(52, 112, 190), Color.rgb(45, 137, 86), Color.rgb(202, 61, 68), Color.rgb(137, 119, 77)};
-    private final int[] classLogos = {R.drawable.class_cubs, R.drawable.class_wolf_cubs, R.drawable.class_scouts_guides, R.drawable.class_senior, R.drawable.class_rovers};
+    private final String[] classIds = {"cubs", "wolf_cubs_brownies", "scouts_guides", "senior_scouts_guides", "rovers_rangers", "admins"};
+    private final String[] classArabic = {"البراعم", "الأشبال والزهرات", "الكشافة والمرشدات", "الكشاف المتقدم والرائدات", "الجوالة والدليلات", "الإدارة"};
+    private final String[] classAges = {"من 5 إلى 7 سنوات", "من 7 إلى 12 سنة", "من 12 إلى 15 سنة", "من 15 إلى 18 سنة", "من 18 إلى 23 سنة", "قادة ومشرفو الفرع"};
+    private final String[] classTaglines = {"اكتشاف ومتعة", "معًا نتعلّم وننمو", "خدمة ومهارة", "قيادة ومبادرة", "مسؤولية وخدمة المجتمع", "تنظيم وخدمة الفرع"};
+    private final int[] classColors = {Color.rgb(211, 166, 55), Color.rgb(52, 112, 190), Color.rgb(45, 137, 86), Color.rgb(202, 61, 68), Color.rgb(137, 119, 77), Color.rgb(20, 38, 61)};
+    private final int[] classLogos = {R.drawable.class_cubs, R.drawable.class_wolf_cubs, R.drawable.class_scouts_guides, R.drawable.class_senior, R.drawable.class_rovers, R.mipmap.ic_launcher};
     private final String[] genderLabels = {"أنثى", "ذكر"};
     private final String[] genderValues = {"female", "male"};
 
@@ -71,6 +78,9 @@ public class MainActivity extends Activity {
     private int accent, selectedClass = -1;
     private String scoutClassId = "", user = "", emailAddress = "", gender = "", rank = "member", page = "Home";
     private boolean legacyClassSetup = false, isAdmin = false, authSignupVisible = false;
+    private String approvalStatus = "approved", rejectionReason = "", appealMessage = "";
+    private byte[] announcementImage;
+    private TextView announcementImageStatus;
     private String currentRoomId = "global", currentRoomTitle = "الصالة العامة";
     private ListenerRegistration chatListener, announcementListener;
     private LinearLayout root, content, roomMessages;
@@ -94,6 +104,7 @@ public class MainActivity extends Activity {
 
     @Override public void onBackPressed() {
         if (authSignupVisible) { backToSignIn(); return; }
+        if (!isAdmin && ("pending".equals(approvalStatus) || "rejected".equals(approvalStatus))) { super.onBackPressed(); return; }
         if (root != null && page.equals("Room")) { page = "Chat"; showApp(); }
         else if (root != null && !page.equals("Home") && auth.getCurrentUser() != null && !user.isEmpty()) { page = "Home"; showApp(); }
         else super.onBackPressed();
@@ -252,16 +263,27 @@ public class MainActivity extends Activity {
         top(form, text(signup ? "أنشئ حسابك واختر فئتك الكشفية." : "سجّل الدخول للوصول إلى مجتمعك الكشفي.", 15, muted, false), 8);
 
         final EditText nameField = signup ? field("اسمك الكامل") : null;
-        if (nameField != null) { if (legacyClassSetup && user != null) nameField.setText(user); labeled(form, "الاسم", box(nameField, null), 26); }
+        if (nameField != null) {
+            nameField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+            if (Build.VERSION.SDK_INT >= 26) { nameField.setAutofillHints(View.AUTOFILL_HINT_PERSON_NAME); nameField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES); }
+            if (legacyClassSetup && user != null) nameField.setText(user);
+            labeled(form, "الاسم", box(nameField, null), 26);
+        }
 
         final EditText emailField = field("name@example.com");
+        if (Build.VERSION.SDK_INT >= 26) { emailField.setAutofillHints(View.AUTOFILL_HINT_EMAIL_ADDRESS); emailField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES); }
         emailField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         emailField.setTextDirection(View.TEXT_DIRECTION_LTR); emailField.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
         if (signup && signedIn != null && signedIn.getEmail() != null) { emailField.setText(signedIn.getEmail()); emailField.setEnabled(false); }
         labeled(form, "البريد الإلكتروني", box(emailField, null), signup ? 16 : 26);
+        if (!signup) {
+            TextView saved = text("اختيار حساب محفوظ", 13, accentText(accent), true); top(form, saved, 8);
+            saved.setOnClickListener(v -> showSavedAccounts(emailField));
+        }
 
         final EditText passField = signedIn == null ? field("كلمة المرور") : null;
         if (passField != null) {
+            if (Build.VERSION.SDK_INT >= 26) passField.setAutofillHints(signup ? View.AUTOFILL_HINT_NEW_PASSWORD : View.AUTOFILL_HINT_PASSWORD);
             passField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
             passField.setTextDirection(View.TEXT_DIRECTION_LTR); passField.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
             TextView toggle = text("إظهار", 13, accentText(accent), true); toggle.setGravity(Gravity.CENTER);
@@ -282,8 +304,8 @@ public class MainActivity extends Activity {
             top(form, text("الفئة الكشفية", 19, ink, true), 28);
             top(form, text("فئتك تحدّد لونك ودردشتك الخاصة.", 13, muted, false), 4);
             LinearLayout options = column(); top(form, options, 12);
-            final LinearLayout[] rows = new LinearLayout[classIds.length]; final FrameLayout[] checks = new FrameLayout[classIds.length];
-            for (int i = 0; i < classIds.length; i++) {
+            final LinearLayout[] rows = new LinearLayout[MEMBER_CLASS_COUNT]; final FrameLayout[] checks = new FrameLayout[MEMBER_CLASS_COUNT];
+            for (int i = 0; i < MEMBER_CLASS_COUNT; i++) {
                 final int index = i;
                 LinearLayout option = row(); rows[i] = option; pad(option, 12, 12, 14, 12);
                 option.addView(logoView(i, 50));
@@ -305,6 +327,10 @@ public class MainActivity extends Activity {
             top(form, text("الرتبة عند التسجيل: عضو", 13, muted, true), 14);
         }
 
+        if (!signup) {
+            TextView forgot = text("نسيت كلمة المرور؟", 13, accentText(accent), true); top(form, forgot, 12);
+            forgot.setOnClickListener(v -> sendPasswordReset(emailField.getText().toString().trim()));
+        }
         TextView submit = button(signup ? (signedIn != null ? "إكمال الحساب" : "إنشاء الحساب") : "تسجيل الدخول", accent, onColor(accent));
         top(form, submit, signup ? 22 : 28); if (signup) submitRef[0] = submit;
         submit.setOnClickListener(v -> {
@@ -318,7 +344,8 @@ public class MainActivity extends Activity {
                 createAccount(n, e, p, genderValues[genderSel[0]], selectedClass);
             } else {
                 auth.signInWithEmailAndPassword(e, p).addOnCompleteListener(this, task -> {
-                    if (task.isSuccessful()) loadProfile(); else toast("تعذّر تسجيل الدخول. تحقق من البريد وكلمة المرور.");
+                    if (task.isSuccessful()) { rememberAccount(e); loadProfile(); }
+                    else toast(authFailureMessage(task.getException(), false));
                 });
             }
         });
@@ -349,10 +376,42 @@ public class MainActivity extends Activity {
         FirebaseUser current = auth.getCurrentUser();
         if (current != null && email.equalsIgnoreCase(current.getEmail())) { saveProfile(current, name, email, genderValue, classPosition); return; }
         auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener(this, task -> {
-            if (!task.isSuccessful()) { toast("تعذّر إنشاء الحساب. تحقق من البريد أو جرّب كلمة مرور أخرى."); return; }
+            if (!task.isSuccessful()) { toast(authFailureMessage(task.getException(), true)); return; }
+            rememberAccount(email);
             saveProfile(auth.getCurrentUser(), name, email, genderValue, classPosition);
         });
     }
+    private String authFailureMessage(Exception error, boolean creating) {
+        String code = error instanceof FirebaseAuthException ? ((FirebaseAuthException) error).getErrorCode() : "";
+        if (error instanceof FirebaseNetworkException || code.contains("NETWORK")) return "لا يوجد اتصال بالإنترنت. اتصل بالشبكة ثم حاول مجددًا.";
+        if (creating) return "تعذّر إنشاء الحساب. تحقق من البريد وكلمة المرور ثم حاول مجددًا.";
+        if (error instanceof FirebaseFirestoreException && ((FirebaseFirestoreException) error).getCode() == FirebaseFirestoreException.Code.UNAVAILABLE)
+            return "لا يوجد اتصال بالإنترنت. اتصل بالشبكة ثم حاول مجددًا.";
+        return "تعذّر تسجيل الدخول. تحقق من البريد وكلمة المرور.";
+    }
+    private void rememberAccount(String email) {
+        if (prefs == null || email == null || email.trim().isEmpty()) return;
+        Set<String> saved = new HashSet<>(prefs.getStringSet("saved_accounts", Collections.emptySet()));
+        saved.add(email.trim().toLowerCase(Locale.ROOT)); prefs.edit().putStringSet("saved_accounts", saved).apply();
+    }
+    private void showSavedAccounts(EditText emailField) {
+        Set<String> saved = prefs.getStringSet("saved_accounts", Collections.emptySet());
+        if (saved.isEmpty()) { toast("لا توجد حسابات محفوظة على هذا الجهاز بعد."); return; }
+        ArrayList<String> accounts = new ArrayList<>(saved); Collections.sort(accounts);
+        new AlertDialog.Builder(this, dialogTheme()).setTitle("اختيار حساب")
+            .setItems(accounts.toArray(new String[0]), (dialog, which) -> emailField.setText(accounts.get(which)))
+            .setNegativeButton("إلغاء", null).show();
+    }
+    private void sendPasswordReset(String email) {
+        if (email.isEmpty()) { toast("اكتب بريدك الإلكتروني أولًا."); return; }
+        auth.sendPasswordResetEmail(email).addOnSuccessListener(unused -> toast("أرسلنا رابط استعادة كلمة المرور إلى بريدك."))
+            .addOnFailureListener(error -> toast(authFailureMessage(error, false)));
+    }
+    private void switchAccount() {
+        auth.signOut(); legacyClassSetup = false; isAdmin = false; user = ""; gender = ""; scoutClassId = ""; approvalStatus = "approved"; selectedClass = -1;
+        page = "Home"; accent = defaultAccent(); showAuth(false);
+    }
+
     private void saveProfile(FirebaseUser account, String name, String email, String genderValue, int classPosition) {
         if (account == null) { toast("الرجاء تسجيل الدخول من جديد."); return; }
         String verifiedEmail = account.getEmail() == null ? email : account.getEmail();
@@ -365,8 +424,8 @@ public class MainActivity extends Activity {
             ref.update(profile).addOnSuccessListener(unused -> { legacyClassSetup = false; finishProfile(name, verifiedEmail, genderValue, classPosition, rank); })
                 .addOnFailureListener(error -> { toast("تعذّر حفظ فئتك. حدّث قواعد Firestore وحاول مجددًا."); showAuth(true); });
         } else {
-            profile.put("rank", "member"); profile.put("createdAt", FieldValue.serverTimestamp());
-            ref.set(profile).addOnSuccessListener(unused -> finishProfile(name, verifiedEmail, genderValue, classPosition, "member"))
+            profile.put("rank", "member"); profile.put("approvalStatus", "pending"); profile.put("rejectionReason", ""); profile.put("appealMessage", ""); profile.put("createdAt", FieldValue.serverTimestamp());
+            ref.set(profile).addOnSuccessListener(unused -> { rememberAccount(verifiedEmail); approvalStatus = "pending"; finishProfile(name, verifiedEmail, genderValue, classPosition, "member"); })
                 .addOnFailureListener(error -> {
                     String hint = error instanceof FirebaseFirestoreException && ((FirebaseFirestoreException) error).getCode() == FirebaseFirestoreException.Code.PERMISSION_DENIED
                         ? "تحقق من نشر قواعد Firestore المحدّثة."
@@ -378,7 +437,8 @@ public class MainActivity extends Activity {
         }
     }
     private void finishProfile(String name, String email, String genderValue, int classPosition, String savedRank) {
-        user = name; emailAddress = email; gender = genderValue; scoutClassId = classId(classPosition); rank = savedRank; accent = classColors[classPosition]; page = "Home"; loadAdminStatus();
+        user = name; emailAddress = email; gender = genderValue; scoutClassId = classId(classPosition); rank = savedRank; accent = classColors[classPosition];
+        page = "Home"; loadAdminStatus();
     }
     private void loadProfile() {
         FirebaseUser account = auth.getCurrentUser();
@@ -389,15 +449,32 @@ public class MainActivity extends Activity {
             emailAddress = snapshot.getString("email") == null ? account.getEmail() : snapshot.getString("email");
             gender = snapshot.getString("gender") == null ? "" : snapshot.getString("gender");
             rank = snapshot.getString("rank") == null ? "member" : snapshot.getString("rank");
-            scoutClassId = snapshot.getString("scoutClass");
-            if (scoutClassId == null || !Arrays.asList(classIds).contains(scoutClassId)) { legacyClassSetup = true; selectedClass = -1; toast("اختر فئتك الكشفية لإكمال ملفك الشخصي."); showAuth(true); return; }
-            legacyClassSetup = false; accent = classColors[classIndex(scoutClassId)]; page = "Home"; loadAdminStatus();
+            approvalStatus = snapshot.getString("approvalStatus") == null ? "approved" : snapshot.getString("approvalStatus");
+            rejectionReason = snapshot.getString("rejectionReason") == null ? "" : snapshot.getString("rejectionReason");
+            appealMessage = snapshot.getString("appealMessage") == null ? "" : snapshot.getString("appealMessage");
+            if ("admin".equals(rank)) approvalStatus = "approved";
+            String storedClass = snapshot.getString("scoutClass");
+            if ("admin".equals(rank)) scoutClassId = "admins"; else scoutClassId = storedClass;
+            if (!"admin".equals(rank) && (storedClass == null || !Arrays.asList(classIds).subList(0, MEMBER_CLASS_COUNT).contains(storedClass))) { legacyClassSetup = true; selectedClass = -1; toast("اختر فئتك الكشفية لإكمال ملفك الشخصي."); showAuth(true); return; }
+            rememberAccount(emailAddress);
+            legacyClassSetup = false; accent = classColors[classIndex(scoutClassId)];
+            loadAdminStatus();
         }).addOnFailureListener(error -> { toast("تعذّر تحميل ملفك الشخصي. تحقق من الاتصال."); showAuth(false); });
     }
     private void loadAdminStatus() {
         FirebaseUser account = auth.getCurrentUser();
         if (account == null) { isAdmin = false; showApp(); return; }
-        db.collection("admins").document(account.getUid()).get().addOnSuccessListener(doc -> { isAdmin = doc.exists(); showApp(); }).addOnFailureListener(error -> { isAdmin = false; showApp(); });
+        db.collection("admins").document(account.getUid()).get().addOnSuccessListener(doc -> {
+            isAdmin = "admin".equals(rank) || doc.exists();
+            if (isAdmin) { approvalStatus = "approved"; scoutClassId = "admins"; accent = classColors[classIndex(scoutClassId)]; page = "Home"; }
+            else page = "pending".equals(approvalStatus) ? "Pending" : ("rejected".equals(approvalStatus) ? "Rejected" : "Home");
+            showApp();
+        }).addOnFailureListener(error -> {
+            isAdmin = "admin".equals(rank);
+            if (isAdmin) { approvalStatus = "approved"; scoutClassId = "admins"; accent = classColors[classIndex(scoutClassId)]; page = "Home"; }
+            else page = "pending".equals(approvalStatus) ? "Pending" : ("rejected".equals(approvalStatus) ? "Rejected" : "Home");
+            showApp();
+        });
     }
     private void clearListeners() {
         if (chatListener != null) { chatListener.remove(); chatListener = null; }
@@ -416,7 +493,7 @@ public class MainActivity extends Activity {
         content = column(); pad(content, 20, 20, 20, 24); scroll.addView(content);
         if (page.equals("Settings")) content.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         renderPage();
-        bottomNav();
+        if (isAdmin || "approved".equals(approvalStatus)) bottomNav();
     }
     private void bottomNav() {
         View divider = new View(this); divider.setBackgroundColor(line); root.addView(divider, lp(-1, 1));
@@ -443,6 +520,9 @@ public class MainActivity extends Activity {
         else if (page.equals("News")) newsPage();
         else if (page.equals("Chat")) chatPage();
         else if (page.equals("Settings")) settingsPage();
+        else if (page.equals("Approvals")) approvalsPage();
+        else if (page.equals("Pending")) pendingApprovalPage();
+        else if (page.equals("Rejected")) rejectedApprovalPage();
         else profilePage();
     }
     private String initial(String value) { return value == null || value.isEmpty() ? "ك" : value.substring(0, 1).toUpperCase(); }
@@ -465,6 +545,7 @@ public class MainActivity extends Activity {
         sectionLabel("مساحتك الكشفية");
         quickLink(R.drawable.ic_chat, "دردشة الفئة", "تحدّث مع أعضاء فئتك", "Chat");
         quickLink(R.drawable.ic_news, "الإعلانات", "أخبار الفرع وفئتك", "News");
+        if (isAdmin) quickLink(R.drawable.ic_person, "طلبات الانضمام", "مراجعة الحسابات الجديدة", "Approvals");
     }
     private void classHero() {
         int idx = classIndex(scoutClassId);
@@ -491,8 +572,10 @@ public class MainActivity extends Activity {
     private void chatPage() {
         pageHeader("الدردشة", "اختر مساحة للحديث مع الأعضاء.");
         roomCard(-1, "الصالة العامة", "مفتوحة لجميع الأعضاء", "الجميع", brand, "global");
-        if (isAdmin) { for (int i = 0; i < classIds.length; i++) roomCard(i, classArabic[i], classAges[i], "مشرف", classColors[i], classId(i)); }
-        else { int idx = classIndex(scoutClassId); roomCard(idx, classArabic[idx], classAges[idx], "فئتي", classColors[idx], classId(idx)); }
+        if (isAdmin) {
+            for (int i = 0; i < MEMBER_CLASS_COUNT; i++) roomCard(i, classArabic[i], classAges[i], "مشرف", classColors[i], classId(i));
+            roomCard(-2, "دردشة الإدارة", "مساحة خاصة بالمشرفين", "إدارة", brand, "admins");
+        } else { int idx = classIndex(scoutClassId); roomCard(idx, classArabic[idx], classAges[idx], "فئتي", classColors[idx], classId(idx)); }
     }
     private void roomCard(int classIdx, String title, String subtitle, String tag, int color, String roomId) {
         LinearLayout c = row(); c.setBackground(ripple(bordered(surface, 20, line))); pad(c, 14, 14, 14, 14); top(content, c, 12);
@@ -506,15 +589,16 @@ public class MainActivity extends Activity {
 
     // ---- Chat room ----
     private void roomScreen() {
-        int idx = currentRoomId.equals("global") ? -1 : classIndex(currentRoomId);
+        int idx = currentRoomId.equals("global") ? -1 : (currentRoomId.equals("admins") ? -2 : classIndex(currentRoomId));
         LinearLayout header = row(); header.setBackgroundColor(surface); pad(header, 6, 8, 16, 8);
         FrameLayout back = iconBox(R.drawable.ic_back, ink, Color.TRANSPARENT, 24, 22);
         back.setOnClickListener(v -> { page = "Chat"; showApp(); });
         header.addView(back, lp(44, 44));
         if (idx >= 0) { LinearLayout.LayoutParams lg = lp(42, 42); lg.setMarginStart(dp(4)); header.addView(logoView(idx, 42), lg); }
-        else { LinearLayout.LayoutParams lg = lp(42, 42); lg.setMarginStart(dp(4)); header.addView(iconBox(R.drawable.ic_chat, accentText(brand), tint(brand, .16f), 22, 14), lg); }
+        else { LinearLayout.LayoutParams lg = lp(42, 42); lg.setMarginStart(dp(4)); header.addView(iconBox(idx == -2 ? R.drawable.ic_person : R.drawable.ic_chat, accentText(brand), tint(brand, .16f), 22, 14), lg); }
         LinearLayout titles = column(); titles.addView(text(currentRoomTitle, 17, ink, true));
-        top(titles, text(currentRoomId.equals("global") ? "مفتوحة لجميع الأعضاء" : "دردشة خاصة بأعضاء هذه الفئة", 12, muted, false), 1);
+        String roomSubtitle = currentRoomId.equals("global") ? "مفتوحة لجميع الأعضاء" : (currentRoomId.equals("admins") ? "للمشرفين فقط" : "دردشة خاصة بأعضاء هذه الفئة");
+        top(titles, text(roomSubtitle, 12, muted, false), 1);
         header.addView(titles, weighted(12));
         root.addView(header, lp(-1, -2));
         View divider = new View(this); divider.setBackgroundColor(line); root.addView(divider, lp(-1, 1));
@@ -536,8 +620,8 @@ public class MainActivity extends Activity {
 
         messageInput = new EditText(this);
         messageInput.setBackground(null); messageInput.setHint("اكتب رسالة…"); messageInput.setHintTextColor(muted); messageInput.setTextColor(ink); messageInput.setTextSize(16);
-        messageInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        messageInput.setMinHeight(dp(44)); messageInput.setMaxLines(5); messageInput.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        messageInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        messageInput.setSingleLine(false); messageInput.setHorizontallyScrolling(false); messageInput.setMinHeight(dp(44)); messageInput.setMaxLines(5); messageInput.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         messageInput.setPadding(dp(6), dp(10), dp(6), dp(10)); messageInput.setLineSpacing(0, 1.12f);
         messageInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_MESSAGE)});
         pill.addView(messageInput, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -578,7 +662,7 @@ public class MainActivity extends Activity {
             if (snapshot.isEmpty()) {
                 LinearLayout empty = column(); empty.setGravity(Gravity.CENTER); pad(empty, 20, 60, 20, 20);
                 empty.addView(iconBox(R.drawable.ic_chat, accentText(accent), tint(accent, .16f), 28, 30), lp(64, 64));
-                TextView t = text(currentRoomId.equals("global") ? "لا توجد رسائل بعد" : "ابدأ الحديث مع فئتك", 16, ink, true); t.setGravity(Gravity.CENTER); top(empty, t, 14);
+                TextView t = text(currentRoomId.equals("global") ? "لا توجد رسائل بعد" : (currentRoomId.equals("admins") ? "ابدأ نقاش المشرفين" : "ابدأ الحديث مع فئتك"), 16, ink, true); t.setGravity(Gravity.CENTER); top(empty, t, 14);
                 TextView s = text("كن أول من يكتب هنا.", 13, muted, false); s.setGravity(Gravity.CENTER); top(empty, s, 4);
                 roomMessages.addView(empty, lp(-1, -2)); return;
             }
@@ -601,10 +685,14 @@ public class MainActivity extends Activity {
                     LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(maxBubble - dp(26), dp(200)); pp.topMargin = dp(mine ? 0 : 6);
                     bubble.addView(mediaPreview(media.toBytes(), mediaType), pp);
                 }
-                if (body != null && !body.isEmpty()) { TextView m = text(body, 15, ink, false); m.setLineSpacing(dp(2), 1.1f); top(bubble, m, mine || (media != null) ? (media != null ? 6 : 0) : 3); }
+                if (body != null && !body.isEmpty()) { TextView m = text(body, 15, ink, false); m.setSingleLine(false); m.setHorizontallyScrolling(false); m.setMaxLines(100); m.setLineSpacing(dp(2), 1.1f); top(bubble, m, mine || (media != null) ? (media != null ? 6 : 0) : 3); }
                 Timestamp ts = doc.getTimestamp("createdAt");
                 TextView time = text(ts == null ? "…" : timeFormat.format(ts.toDate()), 10, muted, false);
                 LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2); tp.topMargin = dp(3); tp.gravity = Gravity.END; bubble.addView(time, tp);
+                if (isAdmin) {
+                    TextView remove = text("حذف الرسالة", 11, Color.rgb(190, 55, 55), true); remove.setGravity(Gravity.END);
+                    top(bubble, remove, 5); remove.setOnClickListener(v -> confirmDeleteMessage(doc.getReference()));
+                }
                 LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-2, -2); bp.topMargin = dp(6); bp.gravity = mine ? Gravity.START : Gravity.END;
                 roomMessages.addView(bubble, bp);
             }
@@ -626,6 +714,19 @@ public class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_ANNOUNCEMENT_IMAGE) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+            Uri imageUri = data.getData(); String imageMime = getContentResolver().getType(imageUri);
+            if (imageMime == null || !imageMime.startsWith("image/")) { toast("اختر صورة صالحة."); return; }
+            new Thread(() -> {
+                try {
+                    byte[] source; try (InputStream input = getContentResolver().openInputStream(imageUri)) { if (input == null) throw new IllegalArgumentException("Cannot read image"); source = readLimited(input, MAX_SOURCE_BYTES); }
+                    byte[] compressed = compressImage(source);
+                    runOnUiThread(() -> { announcementImage = compressed; if (announcementImageStatus != null) announcementImageStatus.setText("تم اختيار الصورة وضغطها"); });
+                } catch (Exception error) { runOnUiThread(() -> toast("تعذّر قراءة الصورة أو ضغطها إلى أقل من 700 كيلوبايت.")); }
+            }).start();
+            return;
+        }
         if (requestCode != PICK_CHAT_IMAGE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData(); String mime = getContentResolver().getType(uri);
         if (mime == null || !mime.startsWith("image/")) { toast("اختر صورة أو GIF."); return; }
@@ -667,11 +768,12 @@ public class MainActivity extends Activity {
         } finally { bitmap.recycle(); }
     }
     private View mediaPreview(byte[] bytes, String type) {
-        if ("image/gif".equals(type)) return new AnimatedGifView(bytes);
+        if ("image/gif".equals(type)) { View gif = new AnimatedGifView(bytes); gif.setOnClickListener(v -> showImageFullscreen(bytes, type)); return gif; }
         ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
         if (bitmap != null) image.setImageBitmap(bitmap); else image.setContentDescription("صورة مرفقة");
-        image.setBackground(shape(tint(accent, .10f), 12)); image.setClipToOutline(true); return image;
+        image.setBackground(shape(tint(accent, .10f), 12)); image.setClipToOutline(true);
+        image.setOnClickListener(v -> showImageFullscreen(bytes, type)); return image;
     }
     private class AnimatedGifView extends View {
         private final Movie movie; private final long started = android.os.SystemClock.uptimeMillis();
@@ -686,11 +788,40 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void confirmDeleteMessage(DocumentReference ref) {
+        new AlertDialog.Builder(this, dialogTheme()).setTitle("حذف الرسالة")
+            .setMessage("هل تريد حذف هذه الرسالة من الدردشة؟")
+            .setNegativeButton("إلغاء", null)
+            .setPositiveButton("حذف", (d, w) -> ref.delete().addOnFailureListener(error -> toast("تعذّر حذف الرسالة."))).show();
+    }
+    private void showImageFullscreen(byte[] bytes, String type) {
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        FrameLayout frame = new FrameLayout(this); frame.setBackgroundColor(Color.BLACK);
+        View image;
+        if ("image/gif".equals(type)) image = new AnimatedGifView(bytes);
+        else {
+            ImageView photo = new ImageView(this); photo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length); if (bitmap != null) photo.setImageBitmap(bitmap);
+            image = photo;
+        }
+        frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        TextView close = text("×", 32, Color.WHITE, true); close.setGravity(Gravity.CENTER); close.setBackground(shape(Color.argb(150, 0, 0, 0), 30));
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.END); cp.setMargins(0, dp(24), dp(16), 0); frame.addView(close, cp); close.setOnClickListener(v -> dialog.dismiss());
+        dialog.setContentView(frame); dialog.setCancelable(true); dialog.show();
+        if (dialog.getWindow() != null) dialog.getWindow().setLayout(-1, -1);
+    }
+
     // ---- Announcements ----
+    private class AnnouncementDraft {
+        String id = "", title = "", subtitle = "", body = "", audience = "all", author = "";
+        byte[] image;
+        Timestamp createdAt;
+    }
     private void newsPage() {
         pageHeader("الإعلانات", "آخر أخبار فرع السلام الكشفي.");
         if (isAdmin) {
-            TextView b = button("إعلان جديد", accent, onColor(accent)); top(content, b, 18); b.setOnClickListener(v -> showAnnouncementDialog());
+            TextView b = button("إعلان جديد", accent, onColor(accent)); top(content, b, 18);
+            b.setOnClickListener(v -> { AnnouncementDraft d = new AnnouncementDraft(); announcementImage = null; showAnnouncementDialog(d); });
         }
         LinearLayout feed = column(); top(content, feed, 12); listenAnnouncements(feed);
     }
@@ -702,37 +833,122 @@ public class MainActivity extends Activity {
     }
     private void listenAnnouncements(LinearLayout feed) {
         Query query = db.collection("announcements");
-        if (isAdmin) query = query.orderBy("createdAt", Query.Direction.DESCENDING).limit(50); else query = query.whereIn("audience", Arrays.asList("all", scoutClassId));
+        if (isAdmin) query = query.orderBy("createdAt", Query.Direction.DESCENDING).limit(100);
+        else query = query.whereIn("audience", Arrays.asList("all", scoutClassId));
         announcementListener = query.addSnapshotListener((snapshot, error) -> {
             if (error != null) { toast("تعذّر تحميل الإعلانات."); return; }
             if (snapshot == null) return;
-            feed.removeAllViews(); int shown = 0;
+            feed.removeAllViews();
             ArrayList<DocumentSnapshot> docs = new ArrayList<>(snapshot.getDocuments());
             Collections.sort(docs, (a, b) -> { Timestamp ta = a.getTimestamp("createdAt"), tb = b.getTimestamp("createdAt"); if (ta == null) return tb == null ? 0 : 1; if (tb == null) return -1; return tb.compareTo(ta); });
             SimpleDateFormat dateFormat = new SimpleDateFormat("d MMM yyyy · h:mm a", AR);
+            int shown = 0;
             for (DocumentSnapshot doc : docs) {
                 String audience = doc.getString("audience");
                 if (!isAdmin && !("all".equals(audience) || scoutClassId.equals(audience))) continue;
                 int color = audienceColor(audience);
-                LinearLayout c = card(20); pad(c, 18, 16, 18, 18);
-                LinearLayout.LayoutParams cp = lp(-1, -2); cp.topMargin = dp(12); feed.addView(c, cp);
-                TextView badge = text(audienceName(audience), 12, accentText(color), true); badge.setBackground(shape(tint(color, .16f), 20)); pad(badge, 11, 5, 11, 5);
-                c.addView(badge, new LinearLayout.LayoutParams(-2, -2));
-                top(c, text(doc.getString("title") == null ? "إعلان" : doc.getString("title"), 19, ink, true), 12);
-                TextView body = text(doc.getString("body") == null ? "" : doc.getString("body"), 15, muted, false); body.setLineSpacing(dp(3), 1.1f); top(c, body, 8);
-                String authorName = doc.getString("createdByName"); Timestamp created = doc.getTimestamp("createdAt");
-                String meta = (authorName != null && !authorName.isEmpty() ? authorName : "") + (authorName != null && !authorName.isEmpty() && created != null ? " · " : "") + (created != null ? dateFormat.format(created.toDate()) : "");
-                if (!meta.isEmpty()) top(c, text(meta, 12, muted, false), 14);
-                shown++;
+                LinearLayout c = card(20); pad(c, 14, 14, 14, 14); top(feed, c, 12);
+                Blob blob = doc.getBlob("imageData"); String type = doc.getString("imageType");
+                if (blob != null && type != null) {
+                    View thumb = mediaPreview(blob.toBytes(), type); LinearLayout.LayoutParams ip = lp(-1, 150); c.addView(thumb, ip);
+                }
+                TextView badge = text(audienceName(audience), 11, accentText(color), true); badge.setBackground(shape(tint(color, .16f), 20)); pad(badge, 10, 5, 10, 5); top(c, badge, 10);
+                top(c, text(doc.getString("title") == null ? "إعلان" : doc.getString("title"), 19, ink, true), 9);
+                String subtitle = doc.getString("subtitle"); if (subtitle != null && !subtitle.isEmpty()) top(c, text(subtitle, 14, muted, false), 4);
+                Timestamp created = doc.getTimestamp("createdAt"); if (created != null) top(c, text(dateFormat.format(created.toDate()), 12, muted, false), 8);
+                c.setOnClickListener(v -> showAnnouncementDetails(doc)); shown++;
             }
             if (shown == 0) emptyStateIn(feed, R.drawable.ic_news, "لا توجد إعلانات بعد", isAdmin ? "ستظهر إعلانات فرع السلام هنا." : "ستظهر هنا إعلانات الفرع والإعلانات الموجهة لفئتك.");
         });
+    }
+    private void showAnnouncementDetails(DocumentSnapshot doc) {
+        ScrollView scroll = new ScrollView(this); LinearLayout details = column(); details.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); pad(details, 20, 12, 20, 18); scroll.addView(details);
+        details.addView(text(organizationArabic + " · " + branchArabic, 12, green, true));
+        String audience = doc.getString("audience"); top(details, text("الجمهور: " + audienceName(audience), 12, accentText(audienceColor(audience)), true), 10);
+        Blob blob = doc.getBlob("imageData"); String imageType = doc.getString("imageType");
+        if (blob != null && imageType != null) { View image = mediaPreview(blob.toBytes(), imageType); LinearLayout.LayoutParams imageParams = lp(-1, 220); imageParams.topMargin = dp(12); details.addView(image, imageParams); }
+        top(details, text(doc.getString("title") == null ? "إعلان" : doc.getString("title"), 23, ink, true), 12);
+        String subtitle = doc.getString("subtitle"); if (subtitle != null && !subtitle.isEmpty()) top(details, text(subtitle, 17, accentText(accent), true), 7);
+        TextView body = text(doc.getString("body") == null ? "" : doc.getString("body"), 16, muted, false); body.setLineSpacing(dp(4), 1.12f); top(details, body, 12);
+        Timestamp created = doc.getTimestamp("createdAt"); if (created != null) top(details, text(new SimpleDateFormat("d MMM yyyy · h:mm a", AR).format(created.toDate()), 12, muted, false), 16);
+        String author = doc.getString("createdByName"); if (author != null) top(details, text("بواسطة " + author, 12, muted, false), 5);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, dialogTheme()).setTitle("الإعلان").setView(scroll).setPositiveButton("إغلاق", null);
+        if (isAdmin) {
+            builder.setNeutralButton("تعديل", (d, w) -> editAnnouncement(doc));
+            builder.setNegativeButton("حذف", (d, w) -> confirmDeleteAnnouncement(doc.getId()));
+        }
+        builder.show();
+    }
+    private void editAnnouncement(DocumentSnapshot doc) {
+        AnnouncementDraft d = new AnnouncementDraft(); d.id = doc.getId(); d.title = doc.getString("title"); d.subtitle = doc.getString("subtitle"); d.body = doc.getString("body");
+        d.audience = doc.getString("audience"); d.author = doc.getString("createdByName"); d.createdAt = doc.getTimestamp("createdAt");
+        Blob image = doc.getBlob("imageData"); d.image = image == null ? null : image.toBytes(); announcementImage = d.image; showAnnouncementDialog(d);
+    }
+    private void showAnnouncementDialog(AnnouncementDraft draft) {
+        LinearLayout form = column(); form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); pad(form, 18, 8, 18, 4);
+        EditText title = field("العنوان الرئيسي"); title.setFilters(new InputFilter[]{new InputFilter.LengthFilter(100)}); title.setText(draft.title); form.addView(box(title, null));
+        EditText subtitle = field("العنوان الفرعي"); subtitle.setFilters(new InputFilter[]{new InputFilter.LengthFilter(180)}); subtitle.setText(draft.subtitle); top(form, box(subtitle, null), 9);
+        EditText body = new EditText(this); body.setHint("اكتب نص الإعلان…"); body.setHintTextColor(muted); body.setTextColor(ink); body.setTextSize(16);
+        body.setBackground(bordered(surface, 14, line)); body.setPadding(dp(16), dp(14), dp(16), dp(14)); body.setMinLines(4); body.setGravity(Gravity.TOP | Gravity.START);
+        body.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); body.setSingleLine(false); body.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4000)}); body.setText(draft.body); top(form, body, 10);
+        LinearLayout imageActions = row(); top(form, imageActions, 10);
+        TextView pick = button("إضافة صورة", accent, onColor(accent)); imageActions.addView(pick, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView clear = button("إزالة الصورة", surface, ink); LinearLayout.LayoutParams clearP = new LinearLayout.LayoutParams(0, -2, 1f); clearP.setMarginStart(dp(8)); imageActions.addView(clear, clearP);
+        announcementImageStatus = text(announcementImage == null ? "لا توجد صورة مرفقة" : "تم اختيار الصورة", 12, muted, false); top(form, announcementImageStatus, 6);
+        pick.setOnClickListener(v -> pickAnnouncementImage()); clear.setOnClickListener(v -> { announcementImage = null; draft.image = null; announcementImageStatus.setText("لا توجد صورة مرفقة"); });
+        String[] options = new String[1 + classIds.length], audiences = new String[1 + classIds.length]; options[0] = "الجميع"; audiences[0] = "all";
+        for (int i = 0; i < classIds.length; i++) { options[i + 1] = classArabic[i]; audiences[i + 1] = classId(i); }
+        Spinner audience = new Spinner(this); audience.setAdapter(styledAdapter(options));
+        int selected = 0; for (int i = 0; i < audiences.length; i++) if (audiences[i].equals(draft.audience)) selected = i;
+        audience.setSelection(selected); audience.setBackground(bordered(surface, 14, line)); audience.setPopupBackgroundDrawable(shape(surface, 12)); LinearLayout.LayoutParams ap = lp(-1, 52); ap.topMargin = dp(10); form.addView(audience, ap);
+        AlertDialog dialog = new AlertDialog.Builder(this, dialogTheme()).setTitle(draft.id.isEmpty() ? "إعلان جديد" : "تعديل الإعلان").setView(form).setNegativeButton("إلغاء", null).setPositiveButton("معاينة", null).create();
+        dialog.setOnShowListener(unused -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            draft.title = title.getText().toString().trim(); draft.subtitle = subtitle.getText().toString().trim(); draft.body = body.getText().toString().trim(); draft.audience = audiences[audience.getSelectedItemPosition()]; draft.image = announcementImage;
+            if (draft.title.isEmpty() || draft.body.isEmpty()) { toast("أضف العنوان الرئيسي ونص الإعلان."); return; }
+            dialog.dismiss(); showAnnouncementPreview(draft);
+        }));
+        dialog.show();
+    }
+    private void pickAnnouncementImage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("image/*");
+        try { startActivityForResult(intent, PICK_ANNOUNCEMENT_IMAGE); } catch (Exception error) { toast("تعذّر فتح معرض الصور."); }
+    }
+    private void showAnnouncementPreview(AnnouncementDraft draft) {
+        ScrollView scroll = new ScrollView(this); LinearLayout preview = column(); preview.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); pad(preview, 20, 12, 20, 16); scroll.addView(preview);
+        preview.addView(text(organizationArabic + " · " + branchArabic, 12, green, true));
+        top(preview, text("الجمهور: " + audienceName(draft.audience), 13, accentText(audienceColor(draft.audience)), true), 10);
+        if (draft.image != null) top(preview, mediaPreview(draft.image, "image/jpeg"), 12);
+        top(preview, text(draft.title, 22, ink, true), 12);
+        if (!draft.subtitle.isEmpty()) top(preview, text(draft.subtitle, 16, accentText(accent), true), 6);
+        TextView message = text(draft.body, 15, muted, false); message.setLineSpacing(dp(3), 1.1f); top(preview, message, 8);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, dialogTheme()).setTitle("معاينة الإعلان").setView(scroll)
+            .setNegativeButton("رجوع للتعديل", (d, w) -> showAnnouncementDialog(draft))
+            .setPositiveButton(draft.id.isEmpty() ? "نشر" : "حفظ التعديل", (d, w) -> postAnnouncement(draft));
+        builder.show();
+    }
+    private void postAnnouncement(AnnouncementDraft draft) {
+        FirebaseUser account = auth.getCurrentUser(); if (account == null || !isAdmin) { toast("النشر متاح للمشرفين فقط."); return; }
+        Map<String, Object> a = new HashMap<>(); a.put("title", draft.title); a.put("subtitle", draft.subtitle); a.put("body", draft.body); a.put("audience", draft.audience);
+        if (draft.image != null) { a.put("imageData", Blob.fromBytes(draft.image)); a.put("imageType", "image/jpeg"); }
+        else { a.put("imageData", FieldValue.delete()); a.put("imageType", FieldValue.delete()); }
+        DocumentReference ref;
+        if (draft.id.isEmpty()) { a.put("createdBy", account.getUid()); a.put("createdByName", user); a.put("createdAt", FieldValue.serverTimestamp()); ref = db.collection("announcements").document(); }
+        else ref = db.collection("announcements").document(draft.id);
+        DocumentReference target = ref;
+        target.set(a, SetOptions.merge()).addOnSuccessListener(unused -> { toast(draft.id.isEmpty() ? "تم نشر الإعلان." : "تم حفظ التعديل."); if (page.equals("News")) showApp(); })
+            .addOnFailureListener(error -> toast("تعذّر حفظ الإعلان. تأكد من نشر قواعد Firestore."));
+    }
+    private void confirmDeleteAnnouncement(String id) {
+        new AlertDialog.Builder(this, dialogTheme()).setTitle("حذف الإعلان؟").setMessage("سيختفي الإعلان من قائمة الجميع.")
+            .setNegativeButton("إلغاء", null).setPositiveButton("حذف", (d, w) -> db.collection("announcements").document(id).delete()
+                .addOnSuccessListener(unused -> { toast("تم حذف الإعلان."); if (page.equals("News")) showApp(); })
+                .addOnFailureListener(error -> toast("تعذّر حذف الإعلان."))).show();
     }
     private void emptyStateIn(LinearLayout parent, int iconRes, String title, String subtitle) {
         LinearLayout c = card(22); c.setGravity(Gravity.CENTER); pad(c, 24, 34, 24, 34);
         c.addView(iconBox(iconRes, accentText(accent), tint(accent, .16f), 28, 30), lp(64, 64));
         TextView h = text(title, 18, ink, true); h.setGravity(Gravity.CENTER); top(c, h, 16);
-        TextView s = text(subtitle, 14, muted, false); s.setGravity(Gravity.CENTER); top(c, s, 6);
+        TextView sub = text(subtitle, 14, muted, false); sub.setGravity(Gravity.CENTER); top(c, sub, 6);
         LinearLayout.LayoutParams p = lp(-1, -2); p.topMargin = dp(12); parent.addView(c, p);
     }
     private ArrayAdapter<String> styledAdapter(String[] items) {
@@ -742,46 +958,6 @@ public class MainActivity extends Activity {
         };
     }
     private int dialogTheme() { return dark ? android.R.style.Theme_Material_Dialog_Alert : android.R.style.Theme_Material_Light_Dialog_Alert; }
-    private void showAnnouncementDialog() { showAnnouncementDialog("", "", 0); }
-    private void showAnnouncementDialog(String initialTitle, String initialBody, int initialAudience) {
-        LinearLayout form = column(); form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); pad(form, 18, 8, 18, 4);
-        EditText title = field("عنوان الإعلان"); title.setFilters(new InputFilter[]{new InputFilter.LengthFilter(100)}); title.setText(initialTitle);
-        form.addView(box(title, null));
-        EditText body = new EditText(this); body.setHint("اكتب الإعلان…"); body.setHintTextColor(muted); body.setTextColor(ink); body.setTextSize(16);
-        body.setBackground(bordered(surface, 14, line)); body.setPadding(dp(16), dp(14), dp(16), dp(14)); body.setMinLines(4); body.setGravity(Gravity.TOP | Gravity.START);
-        body.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        body.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4000)}); body.setText(initialBody); top(form, body, 10);
-        String[] options = new String[1 + classIds.length], audiences = new String[1 + classIds.length];
-        options[0] = "الجميع"; audiences[0] = "all";
-        for (int i = 0; i < classIds.length; i++) { options[i + 1] = classArabic[i]; audiences[i + 1] = classId(i); }
-        Spinner audience = new Spinner(this); audience.setAdapter(styledAdapter(options));
-        audience.setSelection(Math.max(0, Math.min(initialAudience, audiences.length - 1))); audience.setBackground(bordered(surface, 14, line)); audience.setPopupBackgroundDrawable(shape(surface, 12));
-        LinearLayout.LayoutParams ap = lp(-1, 52); ap.topMargin = dp(10); form.addView(audience, ap);
-        AlertDialog dialog = new AlertDialog.Builder(this, dialogTheme()).setTitle("إعلان جديد").setView(form).setNegativeButton("إلغاء", null).setPositiveButton("معاينة", null).create();
-        dialog.setOnShowListener(unused -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String t = title.getText().toString().trim(), b = body.getText().toString().trim();
-            if (t.isEmpty() || b.isEmpty()) { toast("أضف العنوان والرسالة أولًا."); return; }
-            int selected = audience.getSelectedItemPosition(); dialog.dismiss(); showAnnouncementPreview(t, b, audiences[selected], selected);
-        }));
-        dialog.show();
-    }
-    private void showAnnouncementPreview(String title, String body, String audience, int selectedAudience) {
-        LinearLayout preview = column(); preview.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); pad(preview, 22, 8, 22, 8);
-        preview.addView(text(organizationArabic + " · " + branchArabic, 12, green, true));
-        top(preview, text("الجمهور: " + audienceName(audience), 13, accentText(audienceColor(audience)), true), 12);
-        top(preview, text(title, 20, ink, true), 12);
-        TextView message = text(body, 15, muted, false); message.setLineSpacing(dp(3), 1.1f); top(preview, message, 6);
-        top(preview, text("بواسطة " + user, 12, muted, false), 14);
-        new AlertDialog.Builder(this, dialogTheme()).setTitle("معاينة الإعلان").setView(preview)
-            .setNegativeButton("رجوع للتعديل", (d, w) -> showAnnouncementDialog(title, body, selectedAudience))
-            .setPositiveButton("نشر", (d, w) -> postAnnouncement(title, body, audience)).show();
-    }
-    private void postAnnouncement(String title, String body, String audience) {
-        FirebaseUser account = auth.getCurrentUser(); if (account == null || !isAdmin) { toast("النشر متاح للمشرفين فقط."); return; }
-        Map<String, Object> a = new HashMap<>();
-        a.put("title", title); a.put("body", body); a.put("createdBy", account.getUid()); a.put("createdByName", user); a.put("createdAt", FieldValue.serverTimestamp()); a.put("audience", audience);
-        db.collection("announcements").add(a).addOnSuccessListener(ref -> toast("تم نشر الإعلان.")).addOnFailureListener(error -> toast("تعذّر نشر الإعلان."));
-    }
 
     // ---- Profile ----
     private void profilePage() {
@@ -796,9 +972,10 @@ public class MainActivity extends Activity {
         infoRow(c, "البريد الإلكتروني", emailAddress == null ? "" : emailAddress);
         infoRow(c, "الجنس", genderLabel(gender));
         infoRow(c, "الرتبة", rankLabel(rank));
+        TextView switcher = button("تبديل الحساب", accent, onColor(accent)); top(content, switcher, 16); switcher.setOnClickListener(v -> switchAccount());
         TextView out = text("تسجيل الخروج", 16, Color.rgb(dark ? 240 : 190, dark ? 120 : 40, dark ? 120 : 45), true);
         out.setGravity(Gravity.CENTER); out.setBackground(ripple(bordered(surface, 16, line))); pad(out, 16, 16, 16, 16); top(content, out, 16);
-        out.setOnClickListener(v -> { auth.signOut(); legacyClassSetup = false; page = "Home"; isAdmin = false; accent = defaultAccent(); showAuth(false); });
+        out.setOnClickListener(v -> switchAccount());
     }
     private void infoRow(LinearLayout parent, String label, String value) {
         View d = new View(this); d.setBackgroundColor(line); LinearLayout.LayoutParams dp = lp(-1, 1); dp.topMargin = dp(14); parent.addView(d, dp);
@@ -814,13 +991,81 @@ public class MainActivity extends Activity {
         themeOption("system", mode, "System default", "Match your phone's light or dark setting");
         themeOption("light", mode, "Light", "Bright and clean");
         themeOption("dark", mode, "Dark", "Easier on the eyes at night");
+        sectionLabel("Social media");
+        TextView facebook = button("Facebook فرع السلام", accent, onColor(accent)); top(content, facebook, 10);
+        facebook.setOnClickListener(v -> openSocial("https://www.facebook.com/share/1J2UtRoCbt/"));
+        TextView switcher = button("تبديل الحساب", accent, onColor(accent)); top(content, switcher, 10); switcher.setOnClickListener(v -> switchAccount());
         sectionLabel("About");
         LinearLayout about = card(20); pad(about, 18, 16, 18, 16); top(content, about, 12);
         about.addView(text(organizationArabic + " – " + branchArabic, 16, ink, true));
         top(about, text("Version 1.0", 13, muted, false), 6);
         TextView out = text("Sign out", 16, Color.rgb(dark ? 240 : 190, dark ? 120 : 40, dark ? 120 : 45), true);
         out.setGravity(Gravity.CENTER); out.setBackground(ripple(bordered(surface, 16, line))); pad(out, 16, 16, 16, 16); top(content, out, 24);
-        out.setOnClickListener(v -> { auth.signOut(); legacyClassSetup = false; page = "Home"; isAdmin = false; accent = defaultAccent(); showAuth(false); });
+        out.setOnClickListener(v -> switchAccount());
+    }
+    private void openSocial(String url) { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception error) { toast("تعذّر فتح الرابط."); } }
+
+
+    // ---- Account approval ----
+    private void pendingApprovalPage() {
+        pageHeader("طلبك قيد المراجعة", organizationArabic + " · " + branchArabic);
+        LinearLayout card = card(22); pad(card, 20, 20, 20, 20); top(content, card, 22);
+        card.addView(text("شكرًا لانضمامك", 20, ink, true));
+        top(card, text("سيتم تفعيل حسابك بعد موافقة إدارة الفرع. يمكنك العودة لاحقًا للتحقق من حالة طلبك.", 15, muted, false), 8);
+        TextView refresh = button("تحقق من الحالة", accent, onColor(accent)); top(content, refresh, 16); refresh.setOnClickListener(v -> loadProfile());
+        TextView logout = button("تسجيل الخروج", surface, ink); top(content, logout, 10); logout.setOnClickListener(v -> switchAccount());
+    }
+    private void rejectedApprovalPage() {
+        pageHeader("تعذّر قبول الطلب", organizationArabic + " · " + branchArabic);
+        LinearLayout c = card(22); pad(c, 20, 18, 20, 18); top(content, c, 20);
+        c.addView(text("سبب الرفض", 16, ink, true));
+        top(c, text(rejectionReason.isEmpty() ? "لم يذكر المشرف سببًا." : rejectionReason, 15, muted, false), 8);
+        EditText appeal = new EditText(this); appeal.setHint("اكتب توضيحًا أو اطلب إعادة مراجعة الطلب"); appeal.setHintTextColor(muted); appeal.setTextColor(ink); appeal.setTextSize(15);
+        appeal.setMinLines(3); appeal.setGravity(Gravity.TOP | Gravity.START); appeal.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); appeal.setFilters(new InputFilter[]{new InputFilter.LengthFilter(1000)});
+        if (!appealMessage.isEmpty()) appeal.setText(appealMessage);
+        top(content, box(appeal, null), 16);
+        TextView send = button("إرسال طلب مراجعة", accent, onColor(accent)); top(content, send, 10);
+        send.setOnClickListener(v -> {
+            String value = appeal.getText().toString().trim(); if (value.isEmpty()) { toast("اكتب رسالة المراجعة أولًا."); return; }
+            db.collection("users").document(auth.getCurrentUser().getUid()).update("appealMessage", value, "appealAt", FieldValue.serverTimestamp())
+                .addOnSuccessListener(unused -> { appealMessage = value; toast("تم إرسال طلب المراجعة إلى الإدارة."); })
+                .addOnFailureListener(error -> toast("تعذّر إرسال الطلب. تحقق من الاتصال."));
+        });
+        TextView refresh = text("تحقق من حالة الطلب", 14, accentText(accent), true); refresh.setGravity(Gravity.CENTER); top(content, refresh, 18); refresh.setOnClickListener(v -> loadProfile());
+        TextView logout = text("تسجيل الخروج", 14, muted, true); logout.setGravity(Gravity.CENTER); top(content, logout, 14); logout.setOnClickListener(v -> switchAccount());
+    }
+    private void approvalsPage() {
+        pageHeader("طلبات الانضمام", "راجع الطلبات الجديدة وطلبات إعادة المراجعة.");
+        LinearLayout list = column(); top(content, list, 14);
+        db.collection("users").whereIn("approvalStatus", Arrays.asList("pending", "rejected")).get()
+            .addOnSuccessListener(snapshot -> {
+                list.removeAllViews();
+                if (snapshot.isEmpty()) { emptyStateIn(list, R.drawable.ic_person, "لا توجد طلبات معلّقة", "ستظهر طلبات الأعضاء هنا."); return; }
+                for (DocumentSnapshot doc : snapshot.getDocuments()) {
+                    LinearLayout c = card(18); pad(c, 16, 15, 16, 15); top(list, c, 10);
+                    c.addView(text(doc.getString("name") == null ? "عضو" : doc.getString("name"), 17, ink, true));
+                    top(c, text(doc.getString("email") == null ? "" : doc.getString("email"), 13, muted, false), 3);
+                    String cls = doc.getString("scoutClass"); top(c, text("الفئة: " + audienceName(cls) + " · الحالة: " + ("rejected".equals(doc.getString("approvalStatus")) ? "مرفوض" : "قيد المراجعة"), 13, accentText(audienceColor(cls)), true), 6);
+                    String reason = doc.getString("rejectionReason"), appeal = doc.getString("appealMessage");
+                    if (reason != null && !reason.isEmpty()) top(c, text("السبب: " + reason, 13, muted, false), 5);
+                    if (appeal != null && !appeal.isEmpty()) top(c, text("طلب المراجعة: " + appeal, 13, muted, false), 5);
+                    LinearLayout actions = row(); top(c, actions, 10);
+                    TextView accept = button("قبول", green, Color.WHITE); actions.addView(accept, new LinearLayout.LayoutParams(0, -2, 1f));
+                    TextView refuse = button("رفض", Color.rgb(190, 55, 55), Color.WHITE); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(0, -2, 1f); rp.setMarginStart(dp(8)); actions.addView(refuse, rp);
+                    accept.setOnClickListener(v -> updateApplicant(doc.getId(), "approved", ""));
+                    refuse.setOnClickListener(v -> askRejectionReason(doc.getId()));
+                }
+            }).addOnFailureListener(error -> toast("تعذّر تحميل الطلبات. تحقق من قواعد Firestore."));
+    }
+    private void askRejectionReason(String uid) {
+        EditText reason = field("سبب الرفض"); reason.setSingleLine(false); reason.setMinLines(2); reason.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
+        new AlertDialog.Builder(this, dialogTheme()).setTitle("رفض طلب العضوية").setView(box(reason, null)).setNegativeButton("إلغاء", null)
+            .setPositiveButton("رفض", (d, w) -> { String value = reason.getText().toString().trim(); if (value.isEmpty()) { toast("اكتب سبب الرفض ليظهر لصاحب الطلب."); return; } updateApplicant(uid, "rejected", value); }).show();
+    }
+    private void updateApplicant(String uid, String status, String reason) {
+        Map<String, Object> change = new HashMap<>(); change.put("approvalStatus", status); change.put("rejectionReason", reason); change.put("reviewedAt", FieldValue.serverTimestamp()); change.put("reviewedBy", auth.getCurrentUser().getUid());
+        db.collection("users").document(uid).update(change).addOnSuccessListener(unused -> { toast("تم تحديث حالة الطلب."); approvalsPage(); })
+            .addOnFailureListener(error -> toast("تعذّر تحديث الطلب. تحقق من قواعد Firestore."));
     }
     private void themeOption(String value, String current, String title, String subtitle) {
         boolean sel = value.equals(current);

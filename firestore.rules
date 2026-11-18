@@ -1,77 +1,76 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
-
+    function signedIn() { return request.auth != null; }
+    function profileExists(uid) { return exists(/databases/$(database)/documents/users/$(uid)); }
+    function profile(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
     function isAdmin() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      return signedIn() && (exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        || (profileExists(request.auth.uid) && profile(request.auth.uid).rank == 'admin'));
     }
-
     function validScoutClass(value) {
-      return value in [
-        'cubs',
-        'wolf_cubs_brownies',
-        'scouts_guides',
-        'senior_scouts_guides',
-        'rovers_rangers'
-      ];
+      return value in ['cubs', 'wolf_cubs_brownies', 'scouts_guides', 'senior_scouts_guides', 'rovers_rangers', 'admins'];
     }
-
-    function ownProfileExists() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    function ownProfileExists() { return signedIn() && profileExists(request.auth.uid); }
+    function memberApproved() {
+      return ownProfileExists() && (profile(request.auth.uid).rank == 'admin'
+        || !('approvalStatus' in profile(request.auth.uid))
+        || profile(request.auth.uid).approvalStatus == 'approved');
     }
-
-    function isClassRoom(roomId) {
-      return ownProfileExists()
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.scoutClass == roomId;
-    }
-
+    function isClassRoom(roomId) { return memberApproved() && profile(request.auth.uid).scoutClass == roomId; }
     function canAccessRoom(roomId) {
-      return signedIn() && (roomId == 'global' || isAdmin() || isClassRoom(roomId));
+      return signedIn() && (isAdmin() || (roomId != 'admins' && memberApproved()
+        && (roomId == 'global' || isClassRoom(roomId))));
     }
 
     match /users/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
-        && request.resource.data.keys().hasAll(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt', 'approvalStatus', 'rejectionReason', 'appealMessage'])
+        && request.resource.data.keys().hasAll(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt', 'approvalStatus', 'rejectionReason', 'appealMessage'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1
         && request.resource.data.name.size() <= 60
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.gender in ['female', 'male']
         && validScoutClass(request.resource.data.scoutClass)
+        && request.resource.data.scoutClass != 'admins'
         && request.resource.data.rank == 'member'
+        && request.resource.data.approvalStatus == 'pending'
+        && request.resource.data.rejectionReason == ''
+        && request.resource.data.appealMessage == ''
         && request.resource.data.createdAt == request.time;
-      allow update: if (signedIn()
-          && request.auth.uid == uid
+      allow update: if (signedIn() && request.auth.uid == uid
+          && memberApproved()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'gender'])
           && request.resource.data.name is string
           && request.resource.data.name.size() >= 1
           && request.resource.data.name.size() <= 60
           && request.resource.data.gender in ['female', 'male'])
-        || (signedIn()
-          && request.auth.uid == uid
+        || (signedIn() && request.auth.uid == uid
           && !('scoutClass' in resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'gender', 'email', 'clan', 'scoutClass'])
           && request.resource.data.keys().hasAll(['name', 'email', 'gender', 'scoutClass', 'rank', 'createdAt'])
           && !('clan' in request.resource.data)
-          && request.resource.data.name is string
-          && request.resource.data.name.size() >= 1
-          && request.resource.data.name.size() <= 60
           && request.resource.data.email == request.auth.token.email
           && request.resource.data.gender in ['female', 'male']
-          && validScoutClass(request.resource.data.scoutClass))
+          && validScoutClass(request.resource.data.scoutClass)
+          && request.resource.data.scoutClass != 'admins')
+        || (signedIn() && request.auth.uid == uid
+          && resource.data.approvalStatus == 'rejected'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appealMessage', 'appealAt'])
+          && request.resource.data.appealMessage is string
+          && request.resource.data.appealMessage.size() >= 1
+          && request.resource.data.appealMessage.size() <= 1000
+          && request.resource.data.appealAt == request.time)
         || (isAdmin()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rank'])
-          && request.resource.data.rank is string
-          && request.resource.data.rank.size() >= 1
-          && request.resource.data.rank.size() <= 24);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approvalStatus', 'rejectionReason', 'reviewedAt', 'reviewedBy'])
+          && request.resource.data.approvalStatus in ['pending', 'approved', 'rejected']
+          && request.resource.data.rejectionReason is string
+          && request.resource.data.rejectionReason.size() <= 500
+          && request.resource.data.reviewedAt == request.time
+          && request.resource.data.reviewedBy == request.auth.uid);
       allow delete: if (signedIn() && request.auth.uid == uid) || isAdmin();
     }
 
@@ -81,25 +80,29 @@ service cloud.firestore {
     }
 
     match /announcements/{announcementId} {
-      allow read: if signedIn()
-        && (isAdmin()
-          || resource.data.audience == 'all'
-          || (ownProfileExists()
-            && resource.data.audience == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.scoutClass));
+      allow read: if signedIn() && (isAdmin() || (memberApproved()
+        && (resource.data.audience == 'all'
+          || resource.data.audience == profile(request.auth.uid).scoutClass)));
       allow create: if isAdmin()
-        && request.resource.data.keys().hasOnly(['title', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience'])
-        && request.resource.data.keys().hasAll(['title', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience'])
+        && request.resource.data.keys().hasOnly(['title', 'subtitle', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience', 'imageData', 'imageType'])
+        && request.resource.data.keys().hasAll(['title', 'subtitle', 'body', 'createdBy', 'createdByName', 'createdAt', 'audience'])
         && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdByName is string
-        && request.resource.data.createdByName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
+        && request.resource.data.createdByName == profile(request.auth.uid).name
         && request.resource.data.createdAt == request.time
         && request.resource.data.title is string
         && request.resource.data.title.size() >= 1
         && request.resource.data.title.size() <= 100
+        && request.resource.data.subtitle is string
+        && request.resource.data.subtitle.size() <= 180
         && request.resource.data.body is string
         && request.resource.data.body.size() >= 1
         && request.resource.data.body.size() <= 4000
-        && (request.resource.data.audience == 'all' || validScoutClass(request.resource.data.audience));
+        && (request.resource.data.audience == 'all' || validScoutClass(request.resource.data.audience))
+        && (('imageData' in request.resource.data) == ('imageType' in request.resource.data))
+        && (!('imageData' in request.resource.data)
+          || (request.resource.data.imageData is bytes
+            && request.resource.data.imageData.size() <= 716800
+            && request.resource.data.imageType == 'image/jpeg'));
       allow update, delete: if isAdmin();
     }
 
@@ -111,9 +114,8 @@ service cloud.firestore {
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.authorName is string
         && request.resource.data.authorName.size() >= 1
-        && request.resource.data.authorName.size() <= 32
-        && ownProfileExists()
-        && request.resource.data.authorName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
+        && request.resource.data.authorName.size() <= 60
+        && request.resource.data.authorName == profile(request.auth.uid).name
         && request.resource.data.text is string
         && request.resource.data.text.size() <= 1000
         && (request.resource.data.text.size() > 0 || ('mediaData' in request.resource.data && 'mediaType' in request.resource.data))
@@ -129,8 +131,7 @@ service cloud.firestore {
         && request.resource.data.text is string
         && request.resource.data.text.size() >= 1
         && request.resource.data.text.size() <= 1000;
-      allow delete: if canAccessRoom(roomId)
-        && (resource.data.authorId == request.auth.uid || isAdmin());
+      allow delete: if canAccessRoom(roomId) && (resource.data.authorId == request.auth.uid || isAdmin());
     }
   }
 }
