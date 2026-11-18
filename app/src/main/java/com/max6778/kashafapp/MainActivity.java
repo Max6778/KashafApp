@@ -70,7 +70,7 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private int accent, selectedClass = -1;
     private String scoutClassId = "", user = "", emailAddress = "", gender = "", rank = "member", page = "Home";
-    private boolean legacyClassSetup = false, isAdmin = false;
+    private boolean legacyClassSetup = false, isAdmin = false, authSignupVisible = false;
     private String currentRoomId = "global", currentRoomTitle = "الصالة العامة";
     private ListenerRegistration chatListener, announcementListener;
     private LinearLayout root, content, roomMessages;
@@ -93,6 +93,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() { clearListeners(); super.onDestroy(); }
 
     @Override public void onBackPressed() {
+        if (authSignupVisible) { backToSignIn(); return; }
         if (root != null && page.equals("Room")) { page = "Chat"; showApp(); }
         else if (root != null && !page.equals("Home") && auth.getCurrentUser() != null && !user.isEmpty()) { page = "Home"; showApp(); }
         else super.onBackPressed();
@@ -229,6 +230,7 @@ public class MainActivity extends Activity {
     // Auth
     // =====================================================================
     private void showAuth(boolean signup) {
+        authSignupVisible = signup;
         accent = signup && selectedClass >= 0 ? classColors[selectedClass] : defaultAccent();
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(bg);
         LinearLayout form = column(); pad(form, 24, 28, 24, 32); scroll.addView(form); setContentView(scroll); applyInsets(scroll);
@@ -238,6 +240,14 @@ public class MainActivity extends Activity {
         ImageView logo = new ImageView(this); logo.setImageResource(R.mipmap.ic_launcher); brandRow.addView(logo, lp(48, 48));
         LinearLayout names = column(); names.addView(text(organizationArabic, 17, brand, true)); top(names, text(branchArabic, 13, green, true), 2);
         brandRow.addView(names, weighted(12)); form.addView(brandRow);
+        if (signup) {
+            LinearLayout back = row();
+            back.addView(icon(R.drawable.ic_back, accentText(defaultAccent())), lp(20, 20));
+            TextView backLabel = text("العودة إلى تسجيل الدخول", 14, accentText(defaultAccent()), true);
+            back.addView(backLabel);
+            top(form, back, 18);
+            back.setOnClickListener(v -> backToSignIn());
+        }
         top(form, text(signup ? "انضم إلى فرع السلام" : "مرحبًا بعودتك", 30, ink, true), 36);
         top(form, text(signup ? "أنشئ حسابك واختر فئتك الكشفية." : "سجّل الدخول للوصول إلى مجتمعك الكشفي.", 15, muted, false), 8);
 
@@ -318,6 +328,11 @@ public class MainActivity extends Activity {
             toggle.setOnClickListener(v -> { selectedClass = -1; showAuth(!signup); });
         }
     }
+    private void backToSignIn() {
+        if (auth.getCurrentUser() != null) auth.signOut();
+        legacyClassSetup = false; selectedClass = -1; gender = "";
+        showAuth(false);
+    }
     private void styleClassOption(LinearLayout option, FrameLayout check, int i) {
         boolean sel = i == selectedClass;
         option.setBackground(ripple(sel ? bordered(tint(classColors[i], .12f), 18, classColors[i], 2) : bordered(surface, 18, line)));
@@ -393,6 +408,7 @@ public class MainActivity extends Activity {
     // App shell
     // =====================================================================
     private void showApp() {
+        authSignupVisible = false;
         clearListeners();
         root = column(); root.setBackgroundColor(bg); setContentView(root); applyInsets(root);
         if (page.equals("Room")) { roomScreen(); return; }
