@@ -71,7 +71,8 @@ service cloud.firestore {
     match /rooms/{roomId}/messages/{messageId} {
       allow read: if canAccessRoom(roomId);
       allow create: if canAccessRoom(roomId)
-        && request.resource.data.keys().hasOnly(['authorId', 'authorName', 'text', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['authorId', 'authorName', 'text', 'createdAt', 'mediaData', 'mediaType'])
+        && request.resource.data.keys().hasAll(['authorId', 'authorName', 'text', 'createdAt'])
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.authorName is string
         && request.resource.data.authorName.size() >= 1
@@ -79,8 +80,13 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && request.resource.data.authorName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name
         && request.resource.data.text is string
-        && request.resource.data.text.size() >= 1
         && request.resource.data.text.size() <= 1000
+        && (request.resource.data.text.size() > 0 || ('mediaData' in request.resource.data && 'mediaType' in request.resource.data))
+        && (('mediaData' in request.resource.data) == ('mediaType' in request.resource.data))
+        && (!('mediaData' in request.resource.data)
+          || (request.resource.data.mediaData is bytes
+            && request.resource.data.mediaData.size() <= 716800
+            && request.resource.data.mediaType in ['image/jpeg', 'image/gif']))
         && request.resource.data.createdAt == request.time;
       allow update: if canAccessRoom(roomId)
         && (resource.data.authorId == request.auth.uid || isAdmin())

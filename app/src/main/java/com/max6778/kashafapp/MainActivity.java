@@ -4,10 +4,17 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Movie;
+import android.net.Uri;
+import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
+import android.text.InputFilter;
 import android.widget.*;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -16,8 +23,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.text.SimpleDateFormat;
 import java.util.Locale;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 
 public class MainActivity extends Activity {
+    private static final int PICK_CHAT_IMAGE = 7104;
+    private static final int MAX_MEDIA_BYTES = 700 * 1024;
+    private static final int MAX_SOURCE_BYTES = 12 * 1024 * 1024;
     private final int ink=Color.rgb(35,35,48), muted=Color.rgb(112,112,130), paper=Color.rgb(247,247,251), white=Color.WHITE, line=Color.rgb(232,232,241), peach=Color.rgb(255,236,226);
     private final String[] clans={"Red Clan","Green Clan","Blue Clan"};
     private final String[] clanNotes={"Bold energy","Grow together","Make your mark"};
@@ -163,7 +176,9 @@ public class MainActivity extends Activity {
         pageHeader(currentRoomTitle,"Messages are visible to "+(currentRoomId.equals("global")?"all clans":"members of this clan")+".");
         ScrollView messagesScroll=new ScrollView(this);messagesScroll.setFillViewport(false);LinearLayout.LayoutParams scrollParams=lp(-1,320);scrollParams.topMargin=dp(16);content.addView(messagesScroll,scrollParams);
         roomMessages=column();messagesScroll.addView(roomMessages);
-        LinearLayout composer=row();top(content,composer,12);messageInput=field("Message","Write a message...");messageInput.setSingleLine(true);LinearLayout.LayoutParams inputParams=lp(0,52);inputParams.weight=1;composer.addView(messageInput,inputParams);
+        TextView limits=text("Messages: 1,000 characters max  ·  Images/GIFs: 700 KB max",11,muted,false);top(content,limits,9);
+        LinearLayout composer=row();top(content,composer,12);messageInput=field("Message","Write a message...");messageInput.setSingleLine(true);messageInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(1000)});LinearLayout.LayoutParams inputParams=lp(0,52);inputParams.weight=1;composer.addView(messageInput,inputParams);
+        TextView attach=text("＋",22,accent,true);attach.setGravity(Gravity.CENTER);attach.setBackground(bordered(white,14,line));LinearLayout.LayoutParams attachParams=lp(48,48);attachParams.leftMargin=6;composer.addView(attach,attachParams);attach.setOnClickListener(v->pickChatImage());
         TextView send=text("Send",14,white,true);send.setGravity(Gravity.CENTER);send.setBackground(shape(accent,14));pad(send,16,14,16,14);LinearLayout.LayoutParams sendParams=lp(-2,48);sendParams.leftMargin=8;composer.addView(send,sendParams);send.setOnClickListener(v->sendMessage());
         listenMessages(messagesScroll);
     }
@@ -177,7 +192,9 @@ public class MainActivity extends Activity {
                 DocumentSnapshot doc=snapshot.getDocuments().get(i);String author=doc.getString("authorName"),body=doc.getString("text"),authorId=doc.getString("authorId");
                 LinearLayout bubble=column();boolean mine=myUid.equals(authorId);bubble.setBackground(bordered(mine?ink:white,16,line));pad(bubble,13,10,13,10);
                 TextView sender=text(mine?"You":(author==null?"Member":author),11,mine?white:accent,true);bubble.addView(sender);
-                TextView message=text(body==null?"":body,14,mine?white:ink,false);message.setLineSpacing(dp(3),1);top(bubble,message,4);
+                Blob media=doc.getBlob("mediaData");String mediaType=doc.getString("mediaType");
+                if(media!=null&&mediaType!=null){View preview=mediaPreview(media.toBytes(),mediaType);LinearLayout.LayoutParams previewParams=lp(-1,220);previewParams.topMargin=dp(7);bubble.addView(preview,previewParams);}
+                if(body!=null&&!body.isEmpty()){TextView message=text(body,14,mine?white:ink,false);message.setLineSpacing(dp(3),1);top(bubble,message,4);}
                 LinearLayout.LayoutParams bubbleParams=lp(-1,-2);bubbleParams.topMargin=dp(8);roomMessages.addView(bubble,bubbleParams);
             }
             messagesScroll.post(()->messagesScroll.fullScroll(View.FOCUS_DOWN));
@@ -188,6 +205,30 @@ public class MainActivity extends Activity {
         if(account==null||body.isEmpty())return;if(body.length()>1000){toast("Messages must be 1,000 characters or less.");return;}
         Map<String,Object> message=new HashMap<>();message.put("authorId",account.getUid());message.put("authorName",user);message.put("text",body);message.put("createdAt",FieldValue.serverTimestamp());
         db.collection("rooms").document(currentRoomId).collection("messages").add(message).addOnSuccessListener(ref->{if(messageInput!=null)messageInput.setText("");}).addOnFailureListener(error->toast("Message could not be sent. Check your clan membership and Firestore rules."));
+    }
+    private void pickChatImage(){Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("image/*");try{startActivityForResult(intent,PICK_CHAT_IMAGE);}catch(Exception error){toast("Could not open your image picker.");}}
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);if(requestCode!=PICK_CHAT_IMAGE||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        Uri uri=data.getData();String mime=getContentResolver().getType(uri);if(mime==null||!mime.startsWith("image/")){toast("Choose an image or GIF.");return;}
+        String caption=messageInput==null?"":messageInput.getText().toString().trim();FirebaseUser account=auth.getCurrentUser();if(account==null)return;toast("Preparing image…");
+        new Thread(()->{try{
+            byte[] bytes;String storedType;try(InputStream input=getContentResolver().openInputStream(uri)){if(input==null)throw new IllegalArgumentException("Cannot read image");bytes=readLimited(input,MAX_SOURCE_BYTES);}
+            if("image/gif".equalsIgnoreCase(mime)){storedType="image/gif";if(bytes.length>MAX_MEDIA_BYTES)throw new IllegalArgumentException("TOO_LARGE");}else{bytes=compressImage(bytes);storedType="image/jpeg";}
+            if(bytes.length>MAX_MEDIA_BYTES)throw new IllegalArgumentException("TOO_LARGE");
+            Map<String,Object> message=new HashMap<>();message.put("authorId",account.getUid());message.put("authorName",user);message.put("text",caption);message.put("mediaData",Blob.fromBytes(bytes));message.put("mediaType",storedType);message.put("createdAt",FieldValue.serverTimestamp());
+            db.collection("rooms").document(currentRoomId).collection("messages").add(message).addOnSuccessListener(ref->{if(messageInput!=null)messageInput.setText("");}).addOnFailureListener(error->toast("Image could not be sent. Check Firestore rules and your connection."));
+        }catch(IllegalArgumentException error){runOnUiThread(()->toast("Image is too large. Pick a smaller image or a GIF under 700 KB."));}catch(Exception error){runOnUiThread(()->toast("Could not read or compress that image."));}}).start();
+    }
+    private byte[] readLimited(InputStream input,int limit)throws Exception{ByteArrayOutputStream output=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int count,total=0;while((count=input.read(buffer))!=-1){total+=count;if(total>limit)throw new IllegalArgumentException("SOURCE_TOO_LARGE");output.write(buffer,0,count);}return output.toByteArray();}
+    private byte[] compressImage(byte[] source)throws Exception{
+        BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(source,0,source.length,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0)throw new IllegalArgumentException("INVALID_IMAGE");
+        int sample=1;while(Math.max(bounds.outWidth/sample,bounds.outHeight/sample)>1600)sample*=2;BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=sample;Bitmap bitmap=BitmapFactory.decodeByteArray(source,0,source.length,options);if(bitmap==null)throw new IllegalArgumentException("INVALID_IMAGE");
+        try{ByteArrayOutputStream output=new ByteArrayOutputStream();int quality=82;do{output.reset();bitmap.compress(Bitmap.CompressFormat.JPEG,quality,output);quality-=10;}while(output.size()>MAX_MEDIA_BYTES&&quality>=42);if(output.size()>MAX_MEDIA_BYTES)throw new IllegalArgumentException("TOO_LARGE");return output.toByteArray();}finally{bitmap.recycle();}
+    }
+    private View mediaPreview(byte[] bytes,String type){if("image/gif".equals(type))return new AnimatedGifView(bytes);ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);if(bitmap!=null)image.setImageBitmap(bitmap);else image.setContentDescription("Attached image");image.setBackground(shape(tint(accent,.10f),12));return image;}
+    private class AnimatedGifView extends View{
+        private final Movie movie;private final long started=android.os.SystemClock.uptimeMillis();AnimatedGifView(byte[] bytes){super(MainActivity.this);movie=Movie.decodeStream(new ByteArrayInputStream(bytes));setBackground(shape(tint(accent,.10f),12));setContentDescription("Animated GIF");}
+        @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);if(movie==null)return;int duration=movie.duration();if(duration<=0)duration=1000;movie.setTime((int)((android.os.SystemClock.uptimeMillis()-started)%duration));float scale=Math.min((float)getWidth()/movie.width(),(float)getHeight()/movie.height());float left=(getWidth()-movie.width()*scale)/2f,top=(getHeight()-movie.height()*scale)/2f;canvas.save();canvas.translate(left,top);canvas.scale(scale,scale);movie.draw(canvas,0,0);canvas.restore();postInvalidateDelayed(40);}
     }
     private void adminAnnouncementButton(){
         TextView button=text("＋  Post announcement",14,white,true);button.setGravity(Gravity.CENTER);button.setBackground(shape(accent,16));pad(button,14,14,14,14);top(content,button,18);button.setOnClickListener(v->showAnnouncementDialog());
