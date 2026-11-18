@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isClanRoom(roomId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.clan == roomId;
+    }
+
+    function canAccessRoom(roomId) {
+      return signedIn() && (roomId == 'global' || isClanRoom(roomId));
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'gender', 'clan', 'rank', 'createdAt'])
+        && request.resource.data.keys().hasAll(['name', 'gender', 'clan', 'rank', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 60
+        && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say']
+        && request.resource.data.clan in ['red', 'green', 'blue']
+        && request.resource.data.rank == 'member'
+        && request.resource.data.createdAt == request.time;
+      allow update: if (signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'gender'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 1
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.gender in ['female', 'male', 'non-binary', 'prefer_not_to_say'])
+        || (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rank'])
+          && request.resource.data.rank is string
+          && request.resource.data.rank.size() >= 1
+          && request.resource.data.rank.size() <= 24);
+      allow delete: if (signedIn() && request.auth.uid == uid) || isAdmin();
+    }
+
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if signedIn();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'body', 'createdBy', 'createdAt', 'audience'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.body is string
+        && request.resource.data.body.size() >= 1
+        && request.resource.data.body.size() <= 4000
+        && request.resource.data.audience in ['all', 'red', 'green', 'blue'];
+      allow update, delete: if isAdmin();
+    }
+
+    match /rooms/{roomId}/messages/{messageId} {
+      allow read: if canAccessRoom(roomId);
+      allow create: if canAccessRoom(roomId)
+        && request.resource.data.keys().hasOnly(['authorId', 'authorName', 'text', 'createdAt'])
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName is string
+        && request.resource.data.authorName.size() >= 1
+        && request.resource.data.authorName.size() <= 32
+        && request.resource.data.text is string
+        && request.resource.data.text.size() >= 1
+        && request.resource.data.text.size() <= 1000
+        && request.resource.data.createdAt == request.time;
+      allow update: if canAccessRoom(roomId)
+        && (resource.data.authorId == request.auth.uid || isAdmin())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text'])
+        && request.resource.data.text is string
+        && request.resource.data.text.size() >= 1
+        && request.resource.data.text.size() <= 1000;
+      allow delete: if canAccessRoom(roomId)
+        && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+  }
+}

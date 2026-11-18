@@ -1,6 +1,15 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+    id 'com.google.gms.google-services'
+}
 android {
     namespace 'com.max6778.kashafapp'
     compileSdk 35
     defaultConfig { applicationId 'com.max6778.kashafapp'; minSdk 23; targetSdk 35; versionCode 1; versionName '1.0' }
+}
+
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:35.2.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-firestore'
 }
