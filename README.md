@@ -40,3 +40,15 @@ Firestore profiles only include the email address, not the password. Firebase Au
 ## Build
 
 GitHub Actions builds the debug APK on pushes and pull requests to `main`. Download the `KashafApp-debug` artifact from a successful workflow run. The app is implemented in Java with Android Views.
+
+
+## iPhone website
+
+A mobile-first, installable web version lives in [`website/`](website/). It uses the same Firebase project, Authentication users, Firestore profiles, class rooms, announcements, admin roles, and approval flow as the Android app. To enable it:
+
+1. In Firebase Console, add a **Web app** to the existing `kashafapp-6bce1` project. Copy its `appId` into [`website/firebase-config.js`](website/firebase-config.js). The API key, project ID, sender ID, storage bucket, and auth domain are already set from the Android project.
+2. In Firebase Authentication settings, add the published website hostname to **Authorized domains**. Email/password authentication and the current Firestore rules are shared with Android.
+3. In GitHub repository **Settings → Pages**, select **GitHub Actions** as the source. The `Deploy scout website` workflow publishes the `website/` folder on pushes to `main`.
+4. Open the published HTTPS address in iPhone Safari and choose **Share → Add to Home Screen** to install it like an app.
+
+Firebase's browser-module SDK is initialized in `website/app.js`; the project's web app registration provides the web-specific app ID as described in the [Firebase web setup guide](https://firebase.google.com/docs/web/setup). This static client uses Firebase client security rules; it does not store passwords or include admin credentials.
