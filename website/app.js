@@ -58,7 +58,7 @@ onAuthStateChanged(auth, async user=>{
     if(state.isAdmin||!state.profile.approvalStatus||state.profile.approvalStatus==='approved')state.page='Home';
     else state.page=state.profile.approvalStatus==='rejected'?'Rejected':'Pending';
     renderApp();
-  }catch(error){state.authError=error.code==='permission-denied'?'تعذّر قراءة الملف الشخصي. انشر قواعد Firestore الحالية.':'تعذّر تحميل الملف الشخصي. تحقق من الاتصال.';renderAuth()}
+  }catch(error){const code=error?.code||error?.name||'unknown';state.busy=false;state.authError=code==='permission-denied'?'تعذّر قراءة الملف الشخصي. انشر قواعد Firestore الحالية.':`تعذّر تحميل الملف الشخصي. رمز الخطأ: ${code}. تحقق من الاتصال وقواعد Firestore.`;renderAuth()}
 });
 
 function renderAuth(){
