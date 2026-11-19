@@ -1,10 +1,10 @@
-// Firebase project shared with the Android app. Firebase web config values are public identifiers.
-// Register a Web app in Firebase Console to receive a web-specific appId, then replace appId here.
+// Firebase Web app config for the KashafApp project.
+// These values identify the project; access is controlled by Firebase Auth and Firestore rules.
 export const firebaseConfig = {
-  apiKey: "AIzaSyCYfMODH1A_HHWei4ii-0xzZRVc6L38zEg",
+  apiKey: "AIzaSyCFoz-TkVTQ7JrEnyPeDT00KPZ35479g-U",
   authDomain: "kashafapp-6bce1.firebaseapp.com",
   projectId: "kashafapp-6bce1",
   storageBucket: "kashafapp-6bce1.firebasestorage.app",
   messagingSenderId: "456491751175",
-  appId: "1:456491751175:android:f479f334cea179b2b317a2"
+  appId: "1:456491751175:web:b962f8ae619b9ea3b317a2"
 };
