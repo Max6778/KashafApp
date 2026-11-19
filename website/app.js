@@ -7,7 +7,7 @@ import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
   query, where, orderBy, limit, onSnapshot, serverTimestamp, Bytes
 } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
-import { firebaseConfig } from './firebase-config.js';
+import { firebaseConfig } from './firebase-config.js?v=20261119a94ee50';
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
